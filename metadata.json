@@ -1,0 +1,7 @@
+{
+  "name": "EcoSort AI",
+  "description": "AI-powered waste identification, segregation, and responsible disposal assistant for a cleaner, greener planet.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
