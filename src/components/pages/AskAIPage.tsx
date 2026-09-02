@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage } from '../../types';
 import { aiService } from '../../services/apiClient';
+import { optimizeImageForAI } from '../../lib/imageOptimizer';
 import { 
   MessageSquare, 
   Send, 
@@ -104,14 +105,19 @@ export const AskAIPage: React.FC<AskAIPageProps> = ({ isDemoMode }) => {
     }
   };
 
-  const handleImageAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setSelectedImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const optimized = await optimizeImageForAI(file, 1024, 0.85);
+        setSelectedImage(optimized.dataUrl);
+      } catch (err) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setSelectedImage(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 

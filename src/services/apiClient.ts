@@ -118,6 +118,7 @@ export class AIService {
         console.log('   - Detected Item:', data.result.detectedItem);
         console.log('   - Material:', data.result.material);
         console.log('   - Stream Category:', data.result.category, `(${data.result.categoryLabel})`);
+        console.log('   - Where to Segregate:', data.result.whereToSegregate || data.result.binColor);
         console.log('   - Confidence:', `${data.result.confidence}% (${data.result.confidenceLevel})`);
         console.log('   - Is Live Gemini API:', !data.isDemoMode);
         console.groupEnd();
@@ -131,65 +132,61 @@ export class AIService {
         };
       }
       throw new Error('Invalid response structure received from analysis endpoint');
-    } catch (err) {
-      console.warn('⚠️ API endpoint error or offline fallback triggered:', err);
+    } catch (err: any) {
+      console.warn('⚠️ API endpoint error:', err);
+      console.groupEnd();
       
-      let fallbackData = SAMPLE_WASTE_ITEMS.plastic_bottle;
-      const query = (hint || '').toLowerCase();
-
+      // If the caller passed a specific sampleId, use it
       if (sampleId && SAMPLE_WASTE_ITEMS[sampleId]) {
-        fallbackData = SAMPLE_WASTE_ITEMS[sampleId];
-      } else if (query.includes('wood') || query.includes('timber') || query.includes('stick') || query.includes('plank')) {
-        fallbackData = {
-          id: `scan-${Date.now()}`,
-          detectedItem: 'Wood / Timber Scrap',
-          material: 'Untreated Wood / Plant Biomass',
-          category: 'organic',
-          categoryLabel: 'Organic / Bulky Wood',
-          confidence: 88,
-          confidenceLevel: 'high',
-          recommendedDisposal: 'If clean and untreated, chip into garden mulch or compost. If painted or treated, take to municipal bulky waste collection.',
-          whyThisResult: 'Wood is biodegradable organic biomass composed primarily of cellulose and lignin.',
-          ecoTip: 'Repurpose wood offcuts for DIY repairs or garden borders before discarding.',
-          ecoActionScore: 88,
-          specialHandlingRequired: false,
-          alternativeUses: ['Garden plant stakes', 'Craft carving', 'Compost brown matter'],
-          carbonSavedKg: 0.32,
-          timestamp: new Date().toISOString(),
-          isMock: true,
-        };
-      } else {
-        fallbackData = {
-          id: `scan-${Date.now()}`,
-          detectedItem: 'Visual Inspection Item',
-          material: 'Composite / Mixed Material',
-          category: 'context_dependent',
-          categoryLabel: 'Context-Dependent / Mixed',
-          confidence: 72,
-          confidenceLevel: 'medium',
-          recommendedDisposal: 'Inspect for material recycling symbols. If dry and clean, sort with appropriate recyclables; otherwise dispose in general waste.',
-          whyThisResult: 'Live AI analysis fallback triggered. Check container markings for specific resin codes or disposal directions.',
-          ecoTip: 'Always rinse items before tossing into dry recycling bins.',
-          ecoActionScore: 75,
-          specialHandlingRequired: false,
-          timestamp: new Date().toISOString(),
-          isMock: true,
+        return {
+          result: {
+            ...SAMPLE_WASTE_ITEMS[sampleId],
+            id: `scan-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            imageUrl: sanitizedBase64,
+            isMock: true,
+          },
+          isDemoMode: true,
         };
       }
 
-      console.log('Using client fallback fixture:', fallbackData.detectedItem);
-      console.groupEnd();
+      // If user provided a specific hint, use that to guide classification
+      const query = (hint || '').toLowerCase();
+      if (query.includes('wood') || query.includes('timber') || query.includes('stick') || query.includes('plank')) {
+        return {
+          result: {
+            id: `scan-${Date.now()}`,
+            detectedItem: 'Wood / Timber Scrap',
+            material: 'Untreated Wood / Plant Biomass',
+            category: 'organic',
+            categoryLabel: 'Organic / Bulky Wood',
+            binColor: 'Green Bin (Compost) or Bulky Timber Drop-Off',
+            whereToSegregate: 'Green Bin (if small untreated chips) or municipal bulky wood collection.',
+            segregationSteps: [
+              '1. Ensure wood is free of nails, metal hardware, and heavy polyurethane finish',
+              '2. If clean, chop or chip for garden mulch or compost',
+              '3. If treated or painted, take to municipal bulky waste facility'
+            ],
+            confidence: 88,
+            confidenceLevel: 'high',
+            recommendedDisposal: 'If clean and untreated, chip into garden mulch or compost. If painted or treated, take to municipal bulky waste collection.',
+            whyThisResult: 'Wood is biodegradable organic biomass composed primarily of cellulose and lignin.',
+            ecoTip: 'Repurpose wood offcuts for DIY repairs or garden borders before discarding.',
+            ecoActionScore: 88,
+            specialHandlingRequired: false,
+            alternativeUses: ['Garden plant stakes', 'Craft carving', 'Compost brown matter'],
+            carbonSavedKg: 0.32,
+            timestamp: new Date().toISOString(),
+            imageUrl: sanitizedBase64,
+            isMock: true,
+          },
+          isDemoMode: true,
+        };
+      }
 
-      return {
-        result: {
-          ...fallbackData,
-          id: `scan-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          imageUrl: sanitizedBase64,
-          isMock: true,
-        },
-        isDemoMode: true,
-      };
+      // Instead of silently serving a fake plastic bottle, throw the actual error
+      // so the user UI can show the clear retry state with actionable message
+      throw new Error(err?.message || 'Waste analysis network request failed. Please check connection and retry.');
     }
   }
 

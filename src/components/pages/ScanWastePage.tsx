@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { WasteAnalysisResult } from '../../types';
 import { aiService } from '../../services/apiClient';
 import { SAMPLE_WASTE_ITEMS } from '../../services/sampleData';
+import { optimizeImageForAI } from '../../lib/imageOptimizer';
 import { 
   Camera, 
   Upload, 
@@ -65,7 +66,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     }
   };
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     setErrorMessage(null);
     const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!validTypes.includes(file.type)) {
@@ -73,22 +74,30 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       return;
     }
 
-    if (file.size > 15 * 1024 * 1024) {
-      setErrorMessage('Image size too large. Please upload an image under 15MB.');
-      return;
+    try {
+      setIsAnalyzing(true);
+      setAnalysisStep(0);
+      // Downscale large smartphone photos down to crisp ~1024px JPEGs (typically ~100KB)
+      const optimized = await optimizeImageForAI(file, 1024, 0.85);
+      setSelectedImage(optimized.dataUrl);
+      setSelectedMimeType(optimized.mimeType);
+      runAnalysis(optimized.dataUrl, optimized.mimeType, undefined, userHint);
+    } catch (err: any) {
+      setIsAnalyzing(false);
+      console.warn('Image optimization fallback:', err);
+      // Fallback: read directly if canvas resize encounters any issue
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        setSelectedImage(base64);
+        setSelectedMimeType(file.type);
+        runAnalysis(base64, file.type, undefined, userHint);
+      };
+      reader.onerror = () => {
+        setErrorMessage('Failed to read image. Please try again.');
+      };
+      reader.readAsDataURL(file);
     }
-
-    setSelectedMimeType(file.type);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
-      setSelectedImage(base64);
-      runAnalysis(base64, file.type, undefined, userHint);
-    };
-    reader.onerror = () => {
-      setErrorMessage('Failed to read image. Please try again.');
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -210,7 +219,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     }, 200);
   };
 
-  const capturePhoto = () => {
+  const capturePhoto = async () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
     const width = video.videoWidth || 640;
@@ -221,17 +230,22 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, width, height);
-    const base64 = canvas.toDataURL('image/jpeg', 0.92);
+    const rawDataUrl = canvas.toDataURL('image/jpeg', 0.9);
     
     // Stop camera stream cleanly
     stopCamera();
     
-    // Immediately set the captured image into state
-    setSelectedImage(base64);
-    setSelectedMimeType('image/jpeg');
-    
-    // Start analysis with the photo
-    runAnalysis(base64, 'image/jpeg', undefined, userHint);
+    try {
+      setIsAnalyzing(true);
+      const optimized = await optimizeImageForAI(rawDataUrl, 1024, 0.85);
+      setSelectedImage(optimized.dataUrl);
+      setSelectedMimeType(optimized.mimeType);
+      runAnalysis(optimized.dataUrl, optimized.mimeType, undefined, userHint);
+    } catch (err) {
+      setSelectedImage(rawDataUrl);
+      setSelectedMimeType('image/jpeg');
+      runAnalysis(rawDataUrl, 'image/jpeg', undefined, userHint);
+    }
   };
 
   // Run analysis workflow
@@ -252,7 +266,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
         if (prev < steps.length - 1) return prev + 1;
         return prev;
       });
-    }, 600);
+    }, 550);
 
     try {
       const activeHint = hintText !== undefined ? hintText : userHint;
@@ -270,13 +284,13 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       setTimeout(() => {
         setIsAnalyzing(false);
         onAnalysisComplete(response.result);
-      }, 500);
-    } catch (err) {
+      }, 400);
+    } catch (err: any) {
       clearInterval(interval);
       setIsAnalyzing(false);
-      console.warn('Analysis notice:', err);
+      console.warn('Analysis error:', err);
       setErrorMessage(
-        "EcoSort AI couldn't analyze this image right now. Please try again or test a sample."
+        err?.message || "EcoSort AI couldn't analyze this image right now. Please verify your connection or try another photo."
       );
     }
   };

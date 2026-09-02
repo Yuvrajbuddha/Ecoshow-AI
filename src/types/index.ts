@@ -17,6 +17,9 @@ export interface WasteAnalysisResult {
   confidence: number; // 0 to 100
   confidenceLevel: ConfidenceLevel;
   recommendedDisposal: string;
+  binColor?: string; // e.g. "Blue Bin (Dry Recyclables)", "Green Bin (Organic / Compost)", "Yellow Bin (E-Waste)", "Red Bin (Hazardous)", "Black Bin (General Waste)"
+  whereToSegregate?: string; // Direct answer to "Where should have to segregate it?"
+  segregationSteps?: string[]; // Step-by-step segregation checklist
   whyThisResult: string;
   ecoTip: string;
   ecoActionScore: number; // 0 to 100

@@ -121,6 +121,13 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       material: "Untreated Wood / Plant Biomass (Cellulose)",
       category: "organic",
       categoryLabel: "Organic / Bulky Wood",
+      binColor: "Green Bin (Compost) or Bulky Timber Drop-Off",
+      whereToSegregate: "Green Bin (if small chips) or municipal bulky wood drop-off point.",
+      segregationSteps: [
+        "1. Check if wood is untreated and free of nails, metal screws, or heavy varnish.",
+        "2. If raw and small, shred or chip into garden mulch or compost bin.",
+        "3. If painted, treated, or large, take to municipal bulky waste collection."
+      ],
       confidence: 90,
       confidenceLevel: "high",
       recommendedDisposal: "If clean and untreated, chip into garden mulch, use in home composting, or take to municipal wood recycling. If painted or chemically treated, dispose in municipal bulky/general waste.",
@@ -138,19 +145,19 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
   if (query.includes("bottle") || query.includes("plastic") || query.includes("cup")) {
     return { ...SAMPLE_WASTE_ITEMS.plastic_bottle, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
-  if (query.includes("banana") || query.includes("fruit") || query.includes("apple") || query.includes("food") || query.includes("peel")) {
+  if (query.includes("banana") || query.includes("fruit") || query.includes("apple") || query.includes("food") || query.includes("peel") || query.includes("vegetable")) {
     return { ...SAMPLE_WASTE_ITEMS.banana_peel, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
-  if (query.includes("charger") || query.includes("cable") || query.includes("phone") || query.includes("wire")) {
+  if (query.includes("charger") || query.includes("cable") || query.includes("phone") || query.includes("wire") || query.includes("electronic")) {
     return { ...SAMPLE_WASTE_ITEMS.mobile_charger, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
-  if (query.includes("can") || query.includes("aluminum") || query.includes("tin") || query.includes("soda")) {
+  if (query.includes("can") || query.includes("aluminum") || query.includes("tin") || query.includes("soda") || query.includes("metal")) {
     return { ...SAMPLE_WASTE_ITEMS.aluminum_can, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
   if (query.includes("battery") || query.includes("cell")) {
     return { ...SAMPLE_WASTE_ITEMS.used_battery, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
-  if (query.includes("pizza") || query.includes("cardboard") || query.includes("grease")) {
+  if (query.includes("pizza") || query.includes("cardboard") || query.includes("grease") || query.includes("box")) {
     return { ...SAMPLE_WASTE_ITEMS.pizza_box, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
 
@@ -158,9 +165,17 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
   return {
     id: `scan-${Date.now()}`,
     detectedItem: "Waste Item Inspection",
-    material: "Mixed / General Material",
+    material: "Mixed / General Household Material",
     category: "context_dependent",
-    categoryLabel: "Context-Dependent / Mixed",
+    categoryLabel: "Context-Dependent / Inspection Needed",
+    binColor: "Blue Bin (if clean & dry) OR Black Bin (if soiled)",
+    whereToSegregate: "Inspect cleanliness: Sort into Blue Bin if dry recyclable paper/plastic/metal; place into Black Bin if food-soiled or mixed composites.",
+    segregationSteps: [
+      "1. Check the item for recycling identification symbols (#1 to #7 for plastics, PAP for paper, ALU for aluminum).",
+      "2. Empty and clean off all food crumbs, oils, or residues.",
+      "3. If clean and made of single-type recyclable material, drop in Blue Bin (Dry Recyclables).",
+      "4. If multi-material foil pouch, waxed, or contaminated, place in Black Bin (General Trash)."
+    ],
     confidence: 75,
     confidenceLevel: "medium",
     recommendedDisposal: "Check for material markings (e.g. recycling triangle or SPI resin symbol). If clean, dry, and recyclable (plastics #1, #2, #5, metal, paper), sort into dry recycling. If food-soiled or mixed composite, place in general waste.",
@@ -207,20 +222,37 @@ app.post("/api/analyze-waste", async (req: Request, res: Response): Promise<void
       normalizedMimeType = "image/jpeg";
     }
 
-    const systemPrompt = `You are EcoSort AI, a state-of-the-art waste segregation and circular economy intelligence system.
-Analyze the provided image of a waste or household item and determine its precise identity and disposal stream.
+    const promptText = `You are EcoSort AI, an expert multimodal waste classification and segregation engine.
+Analyze this photo of a waste item. The user asks two primary questions:
+1. WHAT IS THE KIND OF WASTE?
+- Identify the specific item (detectedItem).
+- Identify the exact material composition (material).
+- Determine category: one of 'recyclable', 'organic', 'ewaste', 'hazardous', 'general', 'context_dependent'.
+- Determine categoryLabel: human-readable name e.g. 'Dry Recyclable / Paper & Cardboard', 'Organic / Food & Compost', 'E-Waste / Electronics', 'Hazardous / Special Waste', 'General Waste / Landfill'.
 
-CRITICAL INSTRUCTIONS:
-1. Detect EXACTLY what object is visible in the image.
-   - If the image contains WOOD, timber, planks, sticks, wooden utensils, furniture scrap, or tree branches: classify it as Wood / Timber (Material: "Natural Untreated Wood" or "Treated / Composite Wood", Category: "organic" or "recyclable" or "general").
-   - If the image contains PLASTIC: identify specific polymer if possible (PET #1, HDPE #2, PP #5, etc.).
-   - If the image contains METAL: identify aluminum, steel, tin, etc.
-   - If the image contains ORGANIC food or plants: classify as "organic".
-   - Only classify as "ewaste" or "hazardous" if it is ACTUALLY a battery, electronic circuit, appliance, chemical container, or hazardous item. NEVER misclassify wood, organic, plastic, or paper as batteries!
-2. Category must be one of: ["recyclable", "organic", "ewaste", "hazardous", "general", "context_dependent"].
-3. Provide crystal clear, actionable disposal guidance acknowledging municipal variation.
-4. Transparently explain the scientific rationale in "whyThisResult".
-5. Return valid JSON matching the schema.`;
+2. WHERE SHOULD HAVE TO SEGREGATE IT?
+- Determine binColor: explicit bin name, e.g. 'Blue Bin (Dry Recyclables)', 'Green Bin (Organic / Compost)', 'Yellow Bin (E-Waste)', 'Red Bin (Hazardous Drop-Off)', 'Black Bin (General Trash)'.
+- whereToSegregate: direct, clear 1-2 sentence instruction explaining exactly where to deposit this item.
+- segregationSteps: array of 3 to 5 actionable step-by-step instructions to segregate the item properly (e.g. 1. Empty & rinse, 2. Detach cap/liner, 3. Crush/flatten, 4. Deposit in bin).
+
+Additional fields required:
+- recommendedDisposal: summary of recommended disposal method.
+- whyThisResult: scientific and circular economy rationale.
+- ecoTip: actionable environmental advice.
+- ecoActionScore: integer between 50 and 100.
+- confidence: integer between 60 and 99.
+- confidenceLevel: 'high' (85-99), 'medium' (65-84), or 'low' (<65).
+- specialHandlingRequired: boolean (true if batteries, electronics, chemicals, sharps, or biohazards).
+- specialHandlingNotes: string note if special handling is needed.
+- contaminationRisk: 'none', 'low', 'moderate', or 'high'.
+- recyclingCode: e.g. 'PET 1', 'PAP 20', 'ALU 41', or null.
+- alternativeUses: array of 2-3 creative upcycling or repurposing ideas.
+- carbonSavedKg: estimated number of kg CO2e saved by proper diversion.
+
+${hint ? `User note / hint: "${hint}".` : ""}
+${sampleId ? `Item reference: "${sampleId}".` : ""}
+
+Respond ONLY with valid JSON. Do not include markdown code fence formatting if possible.`;
 
     const response = await generateWithModelFallback(ai, {
       contents: [
@@ -231,58 +263,77 @@ CRITICAL INSTRUCTIONS:
           },
         },
         {
-          text: `Please identify and analyze this item for responsible waste segregation. ${hint ? `Additional hint: ${hint}.` : ""} ${sampleId ? `Item context: ${sampleId}.` : ""}`,
+          text: promptText,
         },
       ],
       config: {
-        systemInstruction: systemPrompt,
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            detectedItem: { type: Type.STRING, description: "Specific name of the detected item (e.g. Natural Wood Plank, PET Water Bottle, Banana Peel)" },
-            material: { type: Type.STRING, description: "Material composition (e.g. Natural Wood / Cellulose, PET Plastic Resin #1)" },
-            category: { type: Type.STRING, description: "One of: recyclable, organic, ewaste, hazardous, general, context_dependent" },
-            categoryLabel: { type: Type.STRING, description: "Human friendly label e.g. Organic / Bulky Wood, Recyclable / Dry Waste, E-Waste" },
-            confidence: { type: Type.INTEGER, description: "Confidence integer 0 to 100" },
-            confidenceLevel: { type: Type.STRING, description: "high, medium, or low" },
-            recommendedDisposal: { type: Type.STRING, description: "Actionable disposal instructions" },
-            whyThisResult: { type: Type.STRING, description: "Scientific explanation why this stream applies" },
-            ecoTip: { type: Type.STRING, description: "Practical sustainability tip" },
-            ecoActionScore: { type: Type.INTEGER, description: "Gamification score between 50 and 100" },
-            specialHandlingRequired: { type: Type.BOOLEAN, description: "True if hazardous or dangerous" },
-            specialHandlingNotes: { type: Type.STRING },
-            contaminationRisk: { type: Type.STRING, description: "none, low, moderate, or high" },
-            recyclingCode: { type: Type.STRING, description: "e.g. PET 1, PAP 20, or null" },
-            alternativeUses: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-            carbonSavedKg: { type: Type.NUMBER, description: "Estimated kg CO2e saved" },
-          },
-          required: [
-            "detectedItem",
-            "material",
-            "category",
-            "categoryLabel",
-            "confidence",
-            "confidenceLevel",
-            "recommendedDisposal",
-            "whyThisResult",
-            "ecoTip",
-            "ecoActionScore",
-            "specialHandlingRequired",
-          ],
-        },
       },
     });
 
     let rawText = response.text || "{}";
     rawText = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/gi, "").trim();
-    const parsedJson = JSON.parse(rawText);
+    
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.warn("JSON parse error on model response:", parseErr);
+      // Attempt regex extraction of json block
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) {
+        parsed = JSON.parse(match[0]);
+      } else {
+        throw new Error("Unable to parse model response into JSON");
+      }
+    }
+
+    // Normalize category and binColor
+    const category = (parsed.category || "recyclable").toLowerCase();
+    let binColor = parsed.binColor;
+    if (!binColor) {
+      if (category === "organic") binColor = "Green Bin (Organic / Compost)";
+      else if (category === "recyclable") binColor = "Blue Bin (Dry Recyclables)";
+      else if (category === "ewaste") binColor = "Yellow Bin (E-Waste & Electronics)";
+      else if (category === "hazardous") binColor = "Red Bin (Hazardous Drop-Off)";
+      else if (category === "general") binColor = "Black/Grey Bin (General Trash / Landfill)";
+      else binColor = "Check Bin Markings / Local Drop-Off";
+    }
+
+    let whereToSegregate = parsed.whereToSegregate;
+    if (!whereToSegregate) {
+      whereToSegregate = `Deposit into ${binColor} following standard preparation instructions.`;
+    }
+
+    let segregationSteps = Array.isArray(parsed.segregationSteps) && parsed.segregationSteps.length > 0
+      ? parsed.segregationSteps
+      : [
+          `1. Empty any liquid or organic residue from the item.`,
+          `2. Inspect material components and detach non-compatible lids or tags.`,
+          `3. Place into ${binColor}.`,
+          `4. Keep dry and uncontaminated to preserve recyclable quality.`
+        ];
 
     const result = {
-      ...parsedJson,
+      detectedItem: parsed.detectedItem || "Identified Waste Item",
+      material: parsed.material || "Recoverable Material",
+      category: category,
+      categoryLabel: parsed.categoryLabel || `${category.charAt(0).toUpperCase() + category.slice(1)} Stream`,
+      binColor: binColor,
+      whereToSegregate: whereToSegregate,
+      segregationSteps: segregationSteps,
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 90,
+      confidenceLevel: parsed.confidenceLevel || (parsed.confidence >= 85 ? "high" : "medium"),
+      recommendedDisposal: parsed.recommendedDisposal || whereToSegregate,
+      whyThisResult: parsed.whyThisResult || "Categorized based on physical material composition and circular recovery feasibility.",
+      ecoTip: parsed.ecoTip || "Diverting this item from landfills reduces greenhouse gas emissions and conserves virgin resources.",
+      ecoActionScore: typeof parsed.ecoActionScore === "number" ? parsed.ecoActionScore : 88,
+      specialHandlingRequired: Boolean(parsed.specialHandlingRequired),
+      specialHandlingNotes: parsed.specialHandlingNotes || undefined,
+      contaminationRisk: parsed.contaminationRisk || "low",
+      recyclingCode: parsed.recyclingCode || undefined,
+      alternativeUses: Array.isArray(parsed.alternativeUses) ? parsed.alternativeUses : ["Upcycling", "Repurposing"],
+      carbonSavedKg: typeof parsed.carbonSavedKg === "number" ? parsed.carbonSavedKg : 0.25,
       imageUrl: imageBase64,
       id: `scan-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -291,7 +342,7 @@ CRITICAL INSTRUCTIONS:
 
     res.json({ success: true, result, isDemoMode: false });
   } catch (error) {
-    console.warn("Gemini Vision analysis note (served safe fallback):", (error as any)?.message || error);
+    console.warn("Gemini Vision analysis error (served safe fallback):", (error as any)?.message || error);
     const fallback = getFallbackAnalysis(req.body.hint, req.body.sampleId, req.body.imageBase64);
     res.json({
       success: true,

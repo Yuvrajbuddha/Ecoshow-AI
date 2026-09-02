@@ -18,7 +18,13 @@ import {
   Plus,
   Eye,
   X,
-  Camera
+  Camera,
+  CheckCircle2,
+  Square,
+  CheckSquare,
+  Trash2,
+  Layers,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -38,7 +44,95 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
 }) => {
   const [logged, setLogged] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const badgeClasses = getCategoryBadgeClasses(result.category);
+
+  // Derive bin configuration based on category or explicit binColor
+  const getBinTheme = () => {
+    const rawBin = (result.binColor || '').toLowerCase();
+    const cat = result.category;
+
+    if (rawBin.includes('green') || cat === 'organic') {
+      return {
+        name: result.binColor || 'Green Bin (Organic / Compost)',
+        bgLight: 'bg-emerald-50',
+        border: 'border-emerald-300',
+        textColor: 'text-emerald-950',
+        accentBg: 'bg-emerald-600',
+        accentText: 'text-emerald-50',
+        badgeBg: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+        icon: '🟢',
+        shortDesc: 'Wet waste, food scraps, fruit/vegetable peels, organic garden clippings.',
+      };
+    }
+    if (rawBin.includes('blue') || cat === 'recyclable') {
+      return {
+        name: result.binColor || 'Blue Bin (Dry Recyclables)',
+        bgLight: 'bg-blue-50',
+        border: 'border-blue-300',
+        textColor: 'text-blue-950',
+        accentBg: 'bg-blue-600',
+        accentText: 'text-blue-50',
+        badgeBg: 'bg-blue-100 text-blue-800 border-blue-300',
+        icon: '🔵',
+        shortDesc: 'Clean paper, cardboard, recyclable plastics (#1, #2, #5), aluminum and steel cans.',
+      };
+    }
+    if (rawBin.includes('yellow') || cat === 'ewaste') {
+      return {
+        name: result.binColor || 'Yellow Bin (E-Waste & Electronics)',
+        bgLight: 'bg-amber-50',
+        border: 'border-amber-300',
+        textColor: 'text-amber-950',
+        accentBg: 'bg-amber-500',
+        accentText: 'text-amber-950',
+        badgeBg: 'bg-amber-100 text-amber-900 border-amber-300',
+        icon: '🟡',
+        shortDesc: 'Electronic gadgets, chargers, cables, and circuit components. Never dispose in regular bins.',
+      };
+    }
+    if (rawBin.includes('red') || cat === 'hazardous') {
+      return {
+        name: result.binColor || 'Red Bin (Hazardous Collection)',
+        bgLight: 'bg-rose-50',
+        border: 'border-rose-300',
+        textColor: 'text-rose-950',
+        accentBg: 'bg-rose-600',
+        accentText: 'text-rose-50',
+        badgeBg: 'bg-rose-100 text-rose-900 border-rose-300',
+        icon: '🔴',
+        shortDesc: 'Batteries, chemicals, medical waste, and flammable items. Take to designated drop-off.',
+      };
+    }
+    return {
+      name: result.binColor || 'Black/Grey Bin (General Residual Trash)',
+      bgLight: 'bg-slate-50',
+      border: 'border-slate-300',
+      textColor: 'text-slate-900',
+      accentBg: 'bg-slate-800',
+      accentText: 'text-slate-100',
+      badgeBg: 'bg-slate-200 text-slate-800 border-slate-300',
+      icon: '🔘',
+      shortDesc: 'Non-recyclable packaging, multi-layer wrappers, and heavily soiled items heading to landfill.',
+    };
+  };
+
+  const binTheme = getBinTheme();
+
+  const stepsList = (result.segregationSteps && result.segregationSteps.length > 0)
+    ? result.segregationSteps
+    : [
+        `1. Empty any liquid or organic residue from the item completely.`,
+        `2. Separate non-compatible lids, caps, or composite seals.`,
+        `3. Deposit into ${binTheme.name}.`,
+        `4. Ensure item is kept free of grease or chemical contamination.`
+      ];
+
+  const toggleStep = (idx: number) => {
+    setCompletedSteps(prev => 
+      prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
+    );
+  };
 
   // Trigger celebration confetti on high eco-score items
   useEffect(() => {
@@ -185,7 +279,7 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
         </motion.div>
       )}
 
-      {/* MAIN IDENTITY & CONFIDENCE CARD (With Scanned Photo Display) */}
+      {/* MAIN IDENTITY CARD: WHAT IS THE KIND OF WASTE? */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -194,7 +288,7 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
         <div className="flex flex-col md:flex-row items-start md:items-center gap-6 pb-6 border-b border-slate-100">
           {/* Photo Thumbnail */}
           {result.imageUrl ? (
-            <div className="relative shrink-0 w-full md:w-44 aspect-4/3 md:aspect-square rounded-2xl overflow-hidden border-2 border-emerald-300 shadow-sm bg-slate-900 group">
+            <div className="relative shrink-0 w-full md:w-48 aspect-4/3 md:aspect-square rounded-2xl overflow-hidden border-2 border-emerald-300 shadow-sm bg-slate-900 group">
               <img
                 src={result.imageUrl}
                 alt={result.detectedItem}
@@ -213,37 +307,62 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
               </div>
             </div>
           ) : (
-            <div className="shrink-0 w-20 h-20 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-3xl">
+            <div className="shrink-0 w-24 h-24 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-4xl">
               ♻️
             </div>
           )}
 
-          {/* Item Info */}
+          {/* Item Info: WHAT IS THE KIND OF WASTE */}
           <div className="flex-1 space-y-3">
             <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                Detected Waste Item
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider mb-2">
+                <span>🔍 Question 1: What kind of waste is this?</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Space_Grotesk',sans-serif]">
                 {result.detectedItem}
               </h2>
-              <div className="text-sm text-slate-600 font-medium mt-1">
-                Material: <span className="text-slate-900 font-semibold">{result.material}</span>
+            </div>
+
+            {/* Kind of Waste Matrix */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Material Composition</span>
+                <p className="text-xs sm:text-sm font-bold text-slate-900">{result.material}</p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Waste Category Stream</span>
+                <p className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <span className="text-sm">{binTheme.icon}</span>
+                  <span>{result.categoryLabel}</span>
+                </p>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
               {/* Category Tag */}
               <span
-                className={`px-3.5 py-1.5 rounded-xl text-sm font-bold border flex items-center gap-1.5 shadow-2xs ${badgeClasses.bg} ${badgeClasses.border}`}
+                className={`px-3 py-1 rounded-xl text-xs font-bold border flex items-center gap-1.5 shadow-2xs ${badgeClasses.bg} ${badgeClasses.border}`}
               >
-                <Recycle className="w-4 h-4" />
+                <Recycle className="w-3.5 h-3.5" />
                 {result.categoryLabel}
               </span>
 
               {result.recyclingCode && (
-                <span className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-mono font-bold border border-slate-200">
-                  {result.recyclingCode}
+                <span className="px-3 py-1 rounded-xl bg-slate-100 text-slate-700 text-xs font-mono font-bold border border-slate-200">
+                  Code: {result.recyclingCode}
+                </span>
+              )}
+
+              {result.contaminationRisk && (
+                <span className={`px-2.5 py-1 rounded-xl text-xs font-semibold border ${
+                  result.contaminationRisk === 'high' 
+                    ? 'bg-rose-50 text-rose-800 border-rose-200' 
+                    : result.contaminationRisk === 'moderate'
+                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}>
+                  Contamination: {result.contaminationRisk}
                 </span>
               )}
             </div>
@@ -255,7 +374,7 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
           <div className="flex items-center justify-between text-sm">
             <span className="font-semibold text-slate-700 flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-emerald-600" />
-              AI Classification Confidence
+              AI Visual Classification Confidence
             </span>
             <span className="font-bold text-slate-900 font-mono text-base">
               {result.confidence}%
@@ -279,37 +398,100 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
         </div>
       </motion.div>
 
-      {/* RECOMMENDED DISPOSAL CARD (Highlighted Main Card) */}
+      {/* CORE SECTION 2: WHERE SHOULD YOU SEGREGATE IT? */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="bg-gradient-to-br from-emerald-900 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden space-y-4"
+        className={`rounded-3xl p-6 sm:p-8 border-2 shadow-xl relative overflow-hidden space-y-6 ${binTheme.bgLight} ${binTheme.border}`}
       >
-        <div className="absolute right-0 top-0 translate-x-10 -translate-y-10 w-48 h-48 bg-emerald-500/20 rounded-full blur-2xl pointer-events-none" />
-
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-800/80 border border-emerald-700/60 flex items-center justify-center text-2xl shadow-inner">
-            ♻️
+        {/* Header with Color-Coded Bin Identity */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200/80">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white font-bold text-xs shadow-xs border border-slate-200">
+              <span>🎯 Question 2: Where should you segregate it?</span>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <span className="text-3xl sm:text-4xl">{binTheme.icon}</span>
+              <div>
+                <span className="text-xs uppercase tracking-wider font-bold text-slate-500">
+                  Target Destination Bin
+                </span>
+                <h3 className={`text-xl sm:text-2xl font-black font-['Space_Grotesk',sans-serif] ${binTheme.textColor}`}>
+                  {binTheme.name}
+                </h3>
+              </div>
+            </div>
           </div>
-          <div>
-            <span className="text-xs uppercase tracking-wider font-bold text-emerald-300">
-              Recommended Disposal Method
-            </span>
-            <h3 className="text-xl sm:text-2xl font-bold font-['Space_Grotesk',sans-serif]">
+
+          <div className="sm:text-right">
+            <span className={`inline-block px-3.5 py-1.5 rounded-xl text-xs font-bold border shadow-xs ${binTheme.badgeBg}`}>
               {result.categoryLabel}
-            </h3>
+            </span>
+            <p className="text-[11px] text-slate-500 mt-1 max-w-xs leading-tight">
+              {binTheme.shortDesc}
+            </p>
           </div>
         </div>
 
-        <div className="p-4 sm:p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/15 text-sm sm:text-base leading-relaxed font-normal text-emerald-50">
-          “{result.recommendedDisposal}”
+        {/* Prominent Direct Instruction Box */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-sm space-y-2">
+          <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <span>Direct Segregation Advice</span>
+          </div>
+          <p className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
+            “{result.whereToSegregate || result.recommendedDisposal}”
+          </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-emerald-300/80 pt-1">
-          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+        {/* Step-by-Step Segregation Checklist Protocol */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+            <span className="flex items-center gap-1.5 uppercase tracking-wider">
+              <Layers className="w-4 h-4 text-emerald-600" />
+              <span>Step-by-Step Segregation Protocol</span>
+            </span>
+            <span className="text-slate-500 font-normal">
+              {completedSteps.length} of {stepsList.length} steps completed
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {stepsList.map((step, idx) => {
+              const isChecked = completedSteps.includes(idx);
+              return (
+                <button
+                  key={idx}
+                  id={`btn-segregation-step-${idx}`}
+                  type="button"
+                  onClick={() => toggleStep(idx)}
+                  className={`w-full text-left p-3.5 rounded-2xl border transition-all flex items-start gap-3 text-sm ${
+                    isChecked
+                      ? 'bg-emerald-100/70 border-emerald-300 text-emerald-950 shadow-xs'
+                      : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-800 shadow-2xs'
+                  }`}
+                >
+                  <div className="mt-0.5 shrink-0">
+                    {isChecked ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    ) : (
+                      <Square className="w-5 h-5 text-slate-400" />
+                    )}
+                  </div>
+                  <span className={`leading-relaxed font-medium ${isChecked ? 'line-through text-slate-600' : ''}`}>
+                    {step}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs text-slate-500 pt-1">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>
-            Guidelines adhere to standard circular principles. Check local municipal drop-off variations.
+            Follow these steps to prevent recycling contamination and maximize material recovery.
           </span>
         </div>
       </motion.div>
