@@ -50,6 +50,51 @@ function getGeminiClient(): GoogleGenAI | null {
   return geminiClient;
 }
 
+// Resilient model invocation with automatic fallbacks for 503 high-demand or rate limits
+async function generateWithModelFallback(
+  ai: GoogleGenAI,
+  options: {
+    contents: any;
+    config?: any;
+  }
+): Promise<any> {
+  const candidateModels = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+  let lastError: any = null;
+
+  for (let i = 0; i < candidateModels.length; i++) {
+    const model = candidateModels[i];
+    try {
+      const response = await ai.models.generateContent({
+        ...options,
+        model,
+      });
+      return response;
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = err?.message || String(err);
+      const is503OrOverloaded =
+        err?.status === "UNAVAILABLE" ||
+        err?.code === 503 ||
+        errMsg.includes("503") ||
+        errMsg.toLowerCase().includes("high demand") ||
+        errMsg.toLowerCase().includes("unavailable") ||
+        errMsg.includes("429") ||
+        errMsg.toLowerCase().includes("quota");
+
+      if (is503OrOverloaded && i < candidateModels.length - 1) {
+        console.warn(
+          `Model ${model} is experiencing temporary high demand, trying fallback model ${candidateModels[i + 1]}...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError;
+}
+
 // Health check endpoint
 app.get("/api/health", (_req: Request, res: Response) => {
   const hasKey = Boolean(
@@ -184,8 +229,7 @@ CRITICAL INSTRUCTIONS:
 4. Transparently explain the scientific rationale in "whyThisResult".
 5. Return valid JSON matching the schema.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
+    const response = await generateWithModelFallback(ai, {
       contents: [
         {
           inlineData: {
@@ -254,13 +298,13 @@ CRITICAL INSTRUCTIONS:
 
     res.json({ success: true, result, isDemoMode: false });
   } catch (error) {
-    console.error("Gemini Vision analysis error:", error);
+    console.warn("Gemini Vision analysis note (served safe fallback):", (error as any)?.message || error);
     const fallback = getFallbackAnalysis(req.body.hint, req.body.sampleId, req.body.imageBase64);
     res.json({
       success: true,
       result: fallback,
       isDemoMode: true,
-      fallbackReason: "Live AI model encountered a temporary glitch, providing simulated assessment.",
+      fallbackReason: "Live AI model was temporarily experiencing high demand, provided structured fallback assessment.",
     });
   }
 });
@@ -354,8 +398,7 @@ ${ragContextText || "General municipal waste sorting principles apply."}`;
       text: userMessage || "How should I dispose of this waste item?",
     });
 
-    const chatResponse = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
+    const chatResponse = await generateWithModelFallback(ai, {
       contents: { parts },
       config: {
         systemInstruction,
@@ -370,7 +413,7 @@ ${ragContextText || "General municipal waste sorting principles apply."}`;
       isDemoMode: false,
     });
   } catch (error) {
-    console.error("Gemini Chat error:", error);
+    console.warn("Gemini Chat note (served fallback):", (error as any)?.message || error);
     res.json({
       success: true,
       answer:

@@ -13,7 +13,8 @@ import {
   Image as ImageIcon,
   X,
   FlipHorizontal,
-  Flame
+  Flame,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -34,8 +35,10 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('environment');
+  const [cameraBlocked, setCameraBlocked] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraCaptureInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -106,33 +109,86 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     }
   };
 
-  // Camera handling
+  // Camera handling with progressive fallbacks & permission detection
   const startCamera = async () => {
     setErrorMessage(null);
+    setCameraBlocked(false);
+
+    // If mediaDevices is unavailable (e.g. non-HTTPS, restricted iframe), trigger native capture directly
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      console.warn('getUserMedia is not supported or accessible in this context. Launching native camera capture.');
+      cameraCaptureInputRef.current?.click();
+      return;
+    }
+
     try {
       if (streamRef.current) {
         stopCamera();
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: cameraFacing,
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: cameraFacing,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+      } catch (constraintErr: any) {
+        // If facingMode or resolution constraint fails, try basic video
+        if (
+          constraintErr?.name === 'OverconstrainedError' ||
+          constraintErr?.name === 'ConstraintNotSatisfiedError'
+        ) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        } else {
+          throw constraintErr;
+        }
+      }
+
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play().catch((err) => console.log('Video autoplay error:', err));
+        videoRef.current.play().catch((err) => console.warn('Video autoplay notice:', err));
       }
       setCameraActive(true);
-    } catch (err) {
-      console.error('Camera access error:', err);
-      setErrorMessage(
-        'Could not access camera. Please check permissions or use the file upload option.'
-      );
+    } catch (err: any) {
+      console.warn('Camera access unavailable:', err);
       setCameraActive(false);
+
+      const isPermissionDenied =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        (typeof err?.message === 'string' &&
+          (err.message.toLowerCase().includes('permission') ||
+            err.message.toLowerCase().includes('denied')));
+
+      if (isPermissionDenied) {
+        setCameraBlocked(true);
+        setErrorMessage(
+          'Camera access was denied or is blocked by browser/iframe security. You can snap a photo with your device camera directly, upload a file, or open the app in a new tab.'
+        );
+        // Automatically open the device photo picker / camera capture input so the user can proceed seamlessly
+        setTimeout(() => {
+          cameraCaptureInputRef.current?.click();
+        }, 120);
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        setErrorMessage(
+          'No camera was detected on this device. Please select or drop an image file.'
+        );
+      } else {
+        setErrorMessage(
+          'Could not start live camera preview. Opening device camera / photo selector instead.'
+        );
+        setTimeout(() => {
+          cameraCaptureInputRef.current?.click();
+        }, 120);
+      }
     }
   };
 
@@ -215,7 +271,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     } catch (err) {
       clearInterval(interval);
       setIsAnalyzing(false);
-      console.error(err);
+      console.warn('Analysis notice:', err);
       setErrorMessage(
         "EcoSort AI couldn't analyze this image right now. Please try again or test a sample."
       );
@@ -268,13 +324,50 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start gap-3 text-sm shadow-xs"
+          className="p-4 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-sm shadow-xs"
         >
-          <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-          <div className="flex-1">{errorMessage}</div>
+          <div className="flex items-start gap-3 flex-1">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-2 flex-1">
+              <p className="font-medium text-amber-950 leading-snug">{errorMessage}</p>
+              {cameraBlocked && (
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => cameraCaptureInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition-all active:scale-95"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Snap / Pick Photo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100/70 text-amber-900 border border-amber-300 text-xs font-semibold transition-all active:scale-95"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Upload Image File</span>
+                  </button>
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-amber-800 hover:text-amber-950 underline font-medium"
+                  >
+                    <span>Open in New Tab</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
           <button
-            onClick={() => setErrorMessage(null)}
-            className="text-rose-500 hover:text-rose-700"
+            onClick={() => {
+              setErrorMessage(null);
+              setCameraBlocked(false);
+            }}
+            className="text-amber-600 hover:text-amber-800 self-start sm:self-center p-1 rounded-lg hover:bg-amber-100 transition-colors"
+            title="Dismiss notice"
           >
             <X className="w-4 h-4" />
           </button>
@@ -471,6 +564,17 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
                 onChange={handleFileSelect}
                 className="hidden"
                 id="file-upload-input"
+              />
+
+              {/* Hidden direct camera capture input */}
+              <input
+                ref={cameraCaptureInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleFileSelect}
+                className="hidden"
+                id="camera-capture-input"
               />
 
               <div className="max-w-md mx-auto space-y-6">
