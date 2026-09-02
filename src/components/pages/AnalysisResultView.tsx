@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { WasteAnalysisResult, ActiveTab } from '../../types';
 import { getCategoryBadgeClasses } from '../../lib/utils';
 import { 
@@ -15,9 +15,12 @@ import {
   Share2,
   Award,
   Flame,
-  Plus
+  Plus,
+  Eye,
+  X,
+  Camera
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
 
 interface AnalysisResultViewProps {
@@ -33,7 +36,8 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
   onNavigateTab,
   onLogScanToImpact,
 }) => {
-  const [logged, setLogged] = React.useState(false);
+  const [logged, setLogged] = useState(false);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
   const badgeClasses = getCategoryBadgeClasses(result.category);
 
   // Trigger celebration confetti on high eco-score items
@@ -73,6 +77,40 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Photo Zoom Modal */}
+      <AnimatePresence>
+        {showPhotoModal && result.imageUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-slate-950/90 flex items-center justify-center p-4 backdrop-blur-xs"
+            onClick={() => setShowPhotoModal(false)}
+          >
+            <div
+              className="relative max-w-2xl w-full bg-slate-900 rounded-3xl overflow-hidden border border-slate-700 shadow-2xl p-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => setShowPhotoModal(false)}
+                className="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/70 hover:bg-black/90 text-white backdrop-blur-md"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <img
+                src={result.imageUrl}
+                alt={result.detectedItem}
+                className="w-full max-h-[75vh] object-contain rounded-2xl"
+              />
+              <div className="p-4 text-center">
+                <p className="text-white font-bold text-base">{result.detectedItem}</p>
+                <p className="text-slate-400 text-xs">{result.material}</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Bar: Back Action & Status */}
       <div className="flex items-center justify-between">
         <button
@@ -147,39 +185,68 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
         </motion.div>
       )}
 
-      {/* MAIN IDENTITY & CONFIDENCE CARD */}
+      {/* MAIN IDENTITY & CONFIDENCE CARD (With Scanned Photo Display) */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-md space-y-6"
       >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Detected Waste Item
+        <div className="flex flex-col md:flex-row items-start md:items-center gap-6 pb-6 border-b border-slate-100">
+          {/* Photo Thumbnail */}
+          {result.imageUrl ? (
+            <div className="relative shrink-0 w-full md:w-44 aspect-4/3 md:aspect-square rounded-2xl overflow-hidden border-2 border-emerald-300 shadow-sm bg-slate-900 group">
+              <img
+                src={result.imageUrl}
+                alt={result.detectedItem}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              />
+              <button
+                onClick={() => setShowPhotoModal(true)}
+                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-1.5 text-xs font-bold backdrop-blur-2xs"
+              >
+                <Eye className="w-4 h-4" />
+                <span>View Full Photo</span>
+              </button>
+              <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1">
+                <Camera className="w-3 h-3 text-emerald-400" />
+                <span>Scanned Photo</span>
+              </div>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Space_Grotesk',sans-serif]">
-              {result.detectedItem}
-            </h2>
-            <div className="text-sm text-slate-600 font-medium mt-0.5">
-              Material: <span className="text-slate-900 font-semibold">{result.material}</span>
+          ) : (
+            <div className="shrink-0 w-20 h-20 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-3xl">
+              ♻️
             </div>
-          </div>
+          )}
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Category Tag */}
-            <span
-              className={`px-4 py-2 rounded-xl text-sm font-bold border flex items-center gap-1.5 shadow-xs ${badgeClasses.bg} ${badgeClasses.border}`}
-            >
-              <Recycle className="w-4 h-4" />
-              {result.categoryLabel}
-            </span>
+          {/* Item Info */}
+          <div className="flex-1 space-y-3">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
+                Detected Waste Item
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Space_Grotesk',sans-serif]">
+                {result.detectedItem}
+              </h2>
+              <div className="text-sm text-slate-600 font-medium mt-1">
+                Material: <span className="text-slate-900 font-semibold">{result.material}</span>
+              </div>
+            </div>
 
-            {result.recyclingCode && (
-              <span className="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-mono font-bold border border-slate-200">
-                {result.recyclingCode}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {/* Category Tag */}
+              <span
+                className={`px-3.5 py-1.5 rounded-xl text-sm font-bold border flex items-center gap-1.5 shadow-2xs ${badgeClasses.bg} ${badgeClasses.border}`}
+              >
+                <Recycle className="w-4 h-4" />
+                {result.categoryLabel}
               </span>
-            )}
+
+              {result.recyclingCode && (
+                <span className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-mono font-bold border border-slate-200">
+                  {result.recyclingCode}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 

@@ -303,12 +303,9 @@ export default function App() {
             </div>
           </div>
 
-          <div className="border-t border-slate-100 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-400 text-[11px]">
+          <div className="border-t border-slate-100 pt-6 text-slate-400 text-[11px] text-center sm:text-left">
             <p>
               Aligned with UN Sustainable Development Goals (SDG 11 & SDG 12). Guidelines serve as general circular principles; verify local municipal drop-off rules.
-            </p>
-            <p className="flex items-center gap-1">
-              Powered by Google Gemini 3.7 Flash & Multimodal Vision
             </p>
           </div>
         </div>

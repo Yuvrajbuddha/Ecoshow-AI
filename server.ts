@@ -18,26 +18,44 @@ app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 // Lazy initialization of Gemini Client
 let geminiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.trim() === "") {
-    return null;
-  }
-  if (!geminiClient) {
-    geminiClient = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (apiKey && apiKey !== "MY_GEMINI_API_KEY" && apiKey.trim() !== "") {
+    if (!geminiClient) {
+      geminiClient = new GoogleGenAI({
+        apiKey: apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
         },
-      },
-    });
+      });
+    }
+    return geminiClient;
+  }
+  
+  if (!geminiClient) {
+    try {
+      geminiClient = new GoogleGenAI({
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
+        },
+      });
+    } catch (err) {
+      console.warn("Could not construct GoogleGenAI client without key:", err);
+      return null;
+    }
   }
   return geminiClient;
 }
 
 // Health check endpoint
 app.get("/api/health", (_req: Request, res: Response) => {
-  const hasKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY");
+  const hasKey = Boolean(
+    (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") ||
+    (process.env.GOOGLE_API_KEY && process.env.GOOGLE_API_KEY !== "MY_GEMINI_API_KEY")
+  );
   res.json({
     status: "ok",
     hasGeminiKey: hasKey,
@@ -47,36 +65,73 @@ app.get("/api/health", (_req: Request, res: Response) => {
 });
 
 // Helper for simulated fallback analysis based on text hint or image analysis
-function getFallbackAnalysis(hint?: string, sampleId?: string) {
+function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: string) {
   if (sampleId && SAMPLE_WASTE_ITEMS[sampleId]) {
-    return { ...SAMPLE_WASTE_ITEMS[sampleId], id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
+    return {
+      ...SAMPLE_WASTE_ITEMS[sampleId],
+      imageUrl: imageBase64,
+      id: `scan-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   const query = (hint || "").toLowerCase();
+  if (query.includes("wood") || query.includes("timber") || query.includes("board") || query.includes("stick") || query.includes("plank")) {
+    return {
+      id: `scan-${Date.now()}`,
+      detectedItem: "Natural Wood / Timber Offcut",
+      material: "Untreated Wood / Plant Biomass (Cellulose)",
+      category: "organic",
+      categoryLabel: "Organic / Bulky Wood",
+      confidence: 90,
+      confidenceLevel: "high",
+      recommendedDisposal: "If clean and untreated, chip into garden mulch, use in home composting, or take to municipal wood recycling. If painted or chemically treated, dispose in municipal bulky/general waste.",
+      whyThisResult: "Natural solid wood is biodegradable cellulose biomass. Untreated wood breaks down naturally or can be re-milled, whereas pressure-treated or painted wood contains chemical preservatives.",
+      ecoTip: "Repurpose wood scraps for garden stakes, DIY shelving, or birdhouses before discarding.",
+      ecoActionScore: 88,
+      specialHandlingRequired: false,
+      alternativeUses: ["Garden plant stakes", "Indoor craft projects", "Mulch for landscaping"],
+      carbonSavedKg: 0.35,
+      imageUrl: imageBase64,
+      timestamp: new Date().toISOString(),
+      isMock: true,
+    };
+  }
   if (query.includes("bottle") || query.includes("plastic") || query.includes("cup")) {
-    return { ...SAMPLE_WASTE_ITEMS.plastic_bottle, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
+    return { ...SAMPLE_WASTE_ITEMS.plastic_bottle, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
   if (query.includes("banana") || query.includes("fruit") || query.includes("apple") || query.includes("food") || query.includes("peel")) {
-    return { ...SAMPLE_WASTE_ITEMS.banana_peel, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
+    return { ...SAMPLE_WASTE_ITEMS.banana_peel, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
   if (query.includes("charger") || query.includes("cable") || query.includes("phone") || query.includes("wire")) {
-    return { ...SAMPLE_WASTE_ITEMS.mobile_charger, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
+    return { ...SAMPLE_WASTE_ITEMS.mobile_charger, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
   if (query.includes("can") || query.includes("aluminum") || query.includes("tin") || query.includes("soda")) {
-    return { ...SAMPLE_WASTE_ITEMS.aluminum_can, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
+    return { ...SAMPLE_WASTE_ITEMS.aluminum_can, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
   if (query.includes("battery") || query.includes("cell")) {
-    return { ...SAMPLE_WASTE_ITEMS.used_battery, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
+    return { ...SAMPLE_WASTE_ITEMS.used_battery, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
   if (query.includes("pizza") || query.includes("cardboard") || query.includes("grease")) {
-    return { ...SAMPLE_WASTE_ITEMS.pizza_box, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
+    return { ...SAMPLE_WASTE_ITEMS.pizza_box, imageUrl: imageBase64, id: `scan-${Date.now()}`, timestamp: new Date().toISOString() };
   }
 
-  // Default intelligent fallback
+  // Generic neutral fallback
   return {
-    ...SAMPLE_WASTE_ITEMS.plastic_bottle,
     id: `scan-${Date.now()}`,
+    detectedItem: "Waste Item Inspection",
+    material: "Mixed / General Material",
+    category: "context_dependent",
+    categoryLabel: "Context-Dependent / Mixed",
+    confidence: 75,
+    confidenceLevel: "medium",
+    recommendedDisposal: "Check for material markings (e.g. recycling triangle or SPI resin symbol). If clean, dry, and recyclable (plastics #1, #2, #5, metal, paper), sort into dry recycling. If food-soiled or mixed composite, place in general waste.",
+    whyThisResult: "The item requires inspection of material codes or cleanliness to determine exact stream separation.",
+    ecoTip: "Always rinse containers to prevent contamination of recyclable paper and plastic bales.",
+    ecoActionScore: 78,
+    specialHandlingRequired: false,
     timestamp: new Date().toISOString(),
+    imageUrl: imageBase64,
     isMock: true,
   };
 }
@@ -90,72 +145,83 @@ app.post("/api/analyze-waste", async (req: Request, res: Response): Promise<void
 
     // If force mock requested or no API key, use rich mock/demo response
     if (forceMock || !ai || !imageBase64) {
-      const result = getFallbackAnalysis(hint, sampleId);
+      const result = getFallbackAnalysis(hint, sampleId, imageBase64);
       res.json({ success: true, result, isDemoMode: true });
       return;
     }
 
-    // Clean base64 string
-    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    // Extract clean base64 data regardless of data URL formatting
+    let cleanBase64 = String(imageBase64);
+    if (cleanBase64.includes(",")) {
+      cleanBase64 = cleanBase64.split(",")[1];
+    }
+    cleanBase64 = cleanBase64.trim();
 
-    const systemPrompt = `You are EcoSort AI, a world-class waste segregation and responsible disposal intelligence system.
-Analyze the provided image of a waste item. Identify:
-1. Exact detected item name (e.g. "PET Beverage Bottle", "Aluminum Beverage Can", "Banana Peel", "Lithium-ion AA Battery", "Food-Soiled Pizza Box").
-2. Core material composition (e.g. "PET Plastic (Resin #1)", "Anodized Aluminum", "Organic Biomass", "Zinc-Manganese Heavy Metals").
-3. Category: one of ["recyclable", "organic", "ewaste", "hazardous", "general", "context_dependent"].
-4. categoryLabel: A user friendly label like "Recyclable / Dry Waste", "Organic / Wet Waste", "E-Waste / Specialty", "Hazardous Waste", "General Trash", or "Context-Dependent / Mixed".
-5. confidence: An integer between 0 and 100 representing your identification certainty.
-6. confidenceLevel: "high" if confidence >= 85, "medium" if confidence >= 65 and < 85, or "low" if confidence < 65.
-7. recommendedDisposal: Precise, actionable guidance on how to rinse, clean, separate, or deposit the item. Clearly state that municipal disposal rules can vary by location and never claim universal city authority.
-8. whyThisResult: Transparent, scientific explanation of why the item belongs to this stream.
-9. ecoTip: A concise, practical sustainability recommendation to reduce waste or reuse.
-10. ecoActionScore: An integer between 50 and 100 for gamification/sustainability engagement (not a scientific metric).
-11. specialHandlingRequired: Boolean, true if batteries, e-waste, toxic chemicals, biohazard, or dangerous sharp items.
-12. specialHandlingNotes: Notes if special handling is required.
-13. contaminationRisk: "none", "low", "moderate", or "high" (e.g. food grease, chemical residue).
-14. alternativeUses: Array of 1-2 creative upcycling or repurposing ideas.
-15. carbonSavedKg: Estimated kg CO2e emissions avoided when recycled/composted properly vs landfilling (e.g. 0.12).`;
+    // Determine safe mimeType
+    let normalizedMimeType = mimeType;
+    if (typeof imageBase64 === "string" && imageBase64.startsWith("data:")) {
+      const match = imageBase64.match(/^data:([^;]+);base64,/);
+      if (match && match[1]) {
+        normalizedMimeType = match[1];
+      }
+    }
+    if (!normalizedMimeType || normalizedMimeType === "application/octet-stream") {
+      normalizedMimeType = "image/jpeg";
+    }
+
+    const systemPrompt = `You are EcoSort AI, a state-of-the-art waste segregation and circular economy intelligence system.
+Analyze the provided image of a waste or household item and determine its precise identity and disposal stream.
+
+CRITICAL INSTRUCTIONS:
+1. Detect EXACTLY what object is visible in the image.
+   - If the image contains WOOD, timber, planks, sticks, wooden utensils, furniture scrap, or tree branches: classify it as Wood / Timber (Material: "Natural Untreated Wood" or "Treated / Composite Wood", Category: "organic" or "recyclable" or "general").
+   - If the image contains PLASTIC: identify specific polymer if possible (PET #1, HDPE #2, PP #5, etc.).
+   - If the image contains METAL: identify aluminum, steel, tin, etc.
+   - If the image contains ORGANIC food or plants: classify as "organic".
+   - Only classify as "ewaste" or "hazardous" if it is ACTUALLY a battery, electronic circuit, appliance, chemical container, or hazardous item. NEVER misclassify wood, organic, plastic, or paper as batteries!
+2. Category must be one of: ["recyclable", "organic", "ewaste", "hazardous", "general", "context_dependent"].
+3. Provide crystal clear, actionable disposal guidance acknowledging municipal variation.
+4. Transparently explain the scientific rationale in "whyThisResult".
+5. Return valid JSON matching the schema.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.7-flash",
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: cleanBase64,
-            },
+      contents: [
+        {
+          inlineData: {
+            mimeType: normalizedMimeType,
+            data: cleanBase64,
           },
-          {
-            text: `Analyze this waste item for responsible sorting and disposal. ${hint ? `Context hint: ${hint}` : ""}`,
-          },
-        ],
-      },
+        },
+        {
+          text: `Please identify and analyze this item for responsible waste segregation. ${hint ? `Additional hint: ${hint}` : ""}`,
+        },
+      ],
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            detectedItem: { type: Type.STRING },
-            material: { type: Type.STRING },
-            category: { type: Type.STRING },
-            categoryLabel: { type: Type.STRING },
-            confidence: { type: Type.INTEGER },
-            confidenceLevel: { type: Type.STRING },
-            recommendedDisposal: { type: Type.STRING },
-            whyThisResult: { type: Type.STRING },
-            ecoTip: { type: Type.STRING },
-            ecoActionScore: { type: Type.INTEGER },
-            specialHandlingRequired: { type: Type.BOOLEAN },
+            detectedItem: { type: Type.STRING, description: "Specific name of the detected item (e.g. Natural Wood Plank, PET Water Bottle, Banana Peel)" },
+            material: { type: Type.STRING, description: "Material composition (e.g. Natural Wood / Cellulose, PET Plastic Resin #1)" },
+            category: { type: Type.STRING, description: "One of: recyclable, organic, ewaste, hazardous, general, context_dependent" },
+            categoryLabel: { type: Type.STRING, description: "Human friendly label e.g. Organic / Bulky Wood, Recyclable / Dry Waste, E-Waste" },
+            confidence: { type: Type.INTEGER, description: "Confidence integer 0 to 100" },
+            confidenceLevel: { type: Type.STRING, description: "high, medium, or low" },
+            recommendedDisposal: { type: Type.STRING, description: "Actionable disposal instructions" },
+            whyThisResult: { type: Type.STRING, description: "Scientific explanation why this stream applies" },
+            ecoTip: { type: Type.STRING, description: "Practical sustainability tip" },
+            ecoActionScore: { type: Type.INTEGER, description: "Gamification score between 50 and 100" },
+            specialHandlingRequired: { type: Type.BOOLEAN, description: "True if hazardous or dangerous" },
             specialHandlingNotes: { type: Type.STRING },
-            contaminationRisk: { type: Type.STRING },
-            recyclingCode: { type: Type.STRING },
+            contaminationRisk: { type: Type.STRING, description: "none, low, moderate, or high" },
+            recyclingCode: { type: Type.STRING, description: "e.g. PET 1, PAP 20, or null" },
             alternativeUses: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
             },
-            carbonSavedKg: { type: Type.NUMBER },
+            carbonSavedKg: { type: Type.NUMBER, description: "Estimated kg CO2e saved" },
           },
           required: [
             "detectedItem",
@@ -174,10 +240,13 @@ Analyze the provided image of a waste item. Identify:
       },
     });
 
-    const parsedJson = JSON.parse(response.text || "{}");
+    let rawText = response.text || "{}";
+    rawText = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/gi, "").trim();
+    const parsedJson = JSON.parse(rawText);
 
     const result = {
       ...parsedJson,
+      imageUrl: imageBase64,
       id: `scan-${Date.now()}`,
       timestamp: new Date().toISOString(),
       isMock: false,
@@ -186,8 +255,7 @@ Analyze the provided image of a waste item. Identify:
     res.json({ success: true, result, isDemoMode: false });
   } catch (error) {
     console.error("Gemini Vision analysis error:", error);
-    // Graceful fallback to simulated result so UI doesn't crash
-    const fallback = getFallbackAnalysis(req.body.hint, req.body.sampleId);
+    const fallback = getFallbackAnalysis(req.body.hint, req.body.sampleId, req.body.imageBase64);
     res.json({
       success: true,
       result: fallback,

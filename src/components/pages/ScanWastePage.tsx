@@ -114,12 +114,17 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
         stopCamera();
       }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: cameraFacing },
+        video: { 
+          facingMode: cameraFacing,
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
         audio: false,
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.play().catch((err) => console.log('Video autoplay error:', err));
       }
       setCameraActive(true);
     } catch (err) {
@@ -150,16 +155,25 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
 
   const capturePhoto = () => {
     if (!videoRef.current) return;
+    const video = videoRef.current;
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    const base64 = canvas.toDataURL('image/jpeg', 0.85);
+    ctx.drawImage(video, 0, 0, width, height);
+    const base64 = canvas.toDataURL('image/jpeg', 0.92);
+    
+    // Stop camera stream cleanly
     stopCamera();
+    
+    // Immediately set the captured image into state
     setSelectedImage(base64);
     setSelectedMimeType('image/jpeg');
+    
+    // Start analysis with the photo
     runAnalysis(base64, 'image/jpeg');
   };
 
@@ -170,6 +184,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     sampleKey?: string
   ) => {
     setIsAnalyzing(true);
+    setSelectedImage(imageBase64);
     setAnalysisStep(0);
     setErrorMessage(null);
 
@@ -327,27 +342,49 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       <div className="relative">
         <AnimatePresence mode="wait">
           {isAnalyzing ? (
-            /* ANIMATED MULTI-STEP ANALYSIS SCREEN */
+            /* ANIMATED MULTI-STEP ANALYSIS SCREEN WITH PHOTO SCANNER */
             <motion.div
               key="analyzing"
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
-              className="bg-white rounded-3xl p-8 sm:p-12 border border-emerald-200/80 shadow-xl shadow-emerald-950/5 text-center space-y-8"
+              className="bg-white rounded-3xl p-6 sm:p-10 border border-emerald-200/80 shadow-xl shadow-emerald-950/5 text-center space-y-6"
             >
-              {/* Spinner & Glow */}
-              <div className="relative w-24 h-24 mx-auto flex items-center justify-center">
-                <div className="absolute inset-0 rounded-full bg-emerald-100 animate-ping opacity-30" />
-                <div className="w-20 h-20 rounded-full bg-emerald-50 border-2 border-emerald-500 border-t-transparent animate-spin" />
-                <Sparkles className="w-8 h-8 text-emerald-600 absolute" />
-              </div>
+              {/* Photo Preview with Laser Scanner */}
+              {selectedImage && (
+                <div className="relative max-w-xs sm:max-w-sm mx-auto aspect-4/3 rounded-2xl overflow-hidden border-2 border-emerald-500/80 shadow-md bg-slate-900">
+                  <img
+                    src={selectedImage}
+                    alt="Waste Item to Analyze"
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Glowing Laser Scanline */}
+                  <motion.div
+                    className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981]"
+                    animate={{
+                      top: ['0%', '100%', '0%'],
+                    }}
+                    transition={{
+                      duration: 2,
+                      repeat: Infinity,
+                      ease: 'easeInOut',
+                    }}
+                  />
+                  {/* Grid Reticle Overlay */}
+                  <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
+                  <div className="absolute top-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md text-[11px] font-bold text-emerald-300 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-emerald-400 animate-spin" />
+                    <span>AI Vision Active</span>
+                  </div>
+                </div>
+              )}
 
-              <div className="space-y-2">
-                <h3 className="text-2xl font-bold text-slate-900 font-['Space_Grotesk',sans-serif]">
-                  Analyzing your waste...
+              <div className="space-y-1.5">
+                <h3 className="text-xl sm:text-2xl font-bold text-slate-900 font-['Space_Grotesk',sans-serif]">
+                  Analyzing item in photo...
                 </h3>
-                <p className="text-sm text-slate-500">
-                  Multimodal vision model parsing material polymers & municipal stream rules
+                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+                  Multimodal vision model inspecting shape, material texture, and stream classification
                 </p>
               </div>
 
@@ -364,7 +401,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
               </div>
 
               {/* Animated Checklist Steps */}
-              <div className="max-w-md mx-auto space-y-3 text-left">
+              <div className="max-w-md mx-auto space-y-2.5 text-left">
                 {steps.map((step, idx) => {
                   const isDone = idx < analysisStep;
                   const isCurrent = idx === analysisStep;
@@ -373,7 +410,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
                       key={step.title}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      className={`p-3.5 rounded-xl border flex items-center gap-3 transition-all ${
+                      className={`p-3 rounded-xl border flex items-center gap-3 transition-all ${
                         isDone
                           ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
                           : isCurrent
@@ -381,20 +418,33 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
                           : 'bg-slate-50 border-slate-200/60 text-slate-400 opacity-60'
                       }`}
                     >
-                      <span className="text-lg">{step.icon}</span>
-                      <span className="text-sm font-semibold flex-1">
+                      <span className="text-base">{step.icon}</span>
+                      <span className="text-xs sm:text-sm font-semibold flex-1">
                         {step.title}
                       </span>
                       {isDone ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                       ) : isCurrent ? (
-                        <RefreshCw className="w-4 h-4 text-emerald-600 animate-spin shrink-0" />
+                        <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin shrink-0" />
                       ) : (
-                        <div className="w-4 h-4 rounded-full border border-slate-300 shrink-0" />
+                        <div className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />
                       )}
                     </motion.div>
                   );
                 })}
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAnalyzing(false);
+                    setSelectedImage(null);
+                  }}
+                  className="text-xs text-slate-500 hover:text-slate-700 underline"
+                >
+                  Cancel and choose another photo
+                </button>
               </div>
             </motion.div>
           ) : (
