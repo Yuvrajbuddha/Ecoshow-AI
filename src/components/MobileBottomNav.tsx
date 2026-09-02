@@ -8,7 +8,6 @@ import {
   MoreHorizontal,
   MapPin,
   BookOpen,
-  Settings,
   ShieldCheck,
   X
 } from 'lucide-react';
@@ -122,27 +121,6 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                     <div className="text-xs text-slate-500">Ethics & safety principles</div>
                   </div>
                 </button>
-
-                <button
-                  id="mobile-drawer-settings"
-                  onClick={() => {
-                    setActiveTab('settings');
-                    setMoreDrawerOpen(false);
-                  }}
-                  className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col gap-2 ${
-                    activeTab === 'settings'
-                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                      : 'bg-slate-50 border-slate-200/80 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <div className="w-8 h-8 rounded-xl bg-slate-200 text-slate-700 flex items-center justify-center">
-                    <Settings className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-sm">Settings</div>
-                    <div className="text-xs text-slate-500">AI mode & preferences</div>
-                  </div>
-                </button>
               </div>
             </motion.div>
           </>
@@ -205,7 +183,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             id="mobile-nav-more"
             onClick={() => setMoreDrawerOpen(true)}
             className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-colors ${
-              moreDrawerOpen || ['centers', 'guide', 'responsible-ai', 'settings'].includes(activeTab)
+              moreDrawerOpen || ['centers', 'guide', 'responsible-ai'].includes(activeTab)
                 ? 'text-emerald-700 font-bold'
                 : 'text-slate-500 hover:text-slate-800'
             }`}

@@ -115,5 +115,4 @@ export type ActiveTab =
   | 'impact'
   | 'centers'
   | 'guide'
-  | 'responsible-ai'
-  | 'settings';
+  | 'responsible-ai';

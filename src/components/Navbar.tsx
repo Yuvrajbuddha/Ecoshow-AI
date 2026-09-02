@@ -7,7 +7,6 @@ import {
   BarChart3, 
   MapPin, 
   BookOpen, 
-  Settings, 
   ShieldCheck,
   Flame,
   Menu,
@@ -87,7 +86,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           })}
         </nav>
 
-        {/* Right Actions (Streak, Responsible AI, Settings, Quick Scan CTA) */}
+        {/* Right Actions (Streak, Responsible AI, Quick Scan CTA) */}
         <div className="hidden sm:flex items-center gap-2.5">
           {/* Streak Indicator */}
           <div
@@ -111,20 +110,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
             <span className="hidden xl:inline">Responsible AI</span>
-          </button>
-
-          {/* Settings button */}
-          <button
-            id="nav-settings-btn"
-            onClick={() => setActiveTab('settings')}
-            className={`p-2 rounded-lg border transition-colors ${
-              activeTab === 'settings'
-                ? 'bg-slate-100 text-slate-900 border-slate-300'
-                : 'text-slate-500 border-slate-200 hover:text-slate-800 hover:bg-slate-100/80'
-            }`}
-            title="Settings & AI Mode"
-          >
-            <Settings className="w-4 h-4" />
           </button>
 
           {/* Primary Quick CTA: Scan Waste */}
@@ -175,7 +160,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               {item.label}
             </button>
           ))}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-start">
             <button
               onClick={() => {
                 setActiveTab('responsible-ai');
@@ -185,16 +170,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
               Responsible AI
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('settings');
-                setMobileMenuOpen(false);
-              }}
-              className="px-3 py-2 text-xs font-medium text-slate-600 flex items-center gap-1.5"
-            >
-              <Settings className="w-4 h-4 text-slate-500" />
-              Settings
             </button>
           </div>
         </div>

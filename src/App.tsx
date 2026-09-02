@@ -10,7 +10,6 @@ import { ImpactDashboardPage } from './components/pages/ImpactDashboardPage';
 import { DisposalCentersPage } from './components/pages/DisposalCentersPage';
 import { WasteGuidePage } from './components/pages/WasteGuidePage';
 import { ResponsibleAIPage } from './components/pages/ResponsibleAIPage';
-import { SettingsPage } from './components/pages/SettingsPage';
 import { SAMPLE_METRICS, SAMPLE_ACHIEVEMENTS } from './services/sampleData';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShieldCheck, Heart } from 'lucide-react';
@@ -242,22 +241,6 @@ export default function App() {
               <ResponsibleAIPage />
             </motion.div>
           )}
-
-          {activeTab === 'settings' && (
-            <motion.div
-              key="settings"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.25 }}
-            >
-              <SettingsPage
-                isDemoMode={isDemoMode}
-                setIsDemoMode={setIsDemoMode}
-                onResetUserData={handleResetUserData}
-              />
-            </motion.div>
-          )}
         </AnimatePresence>
       </main>
 
@@ -293,12 +276,6 @@ export default function App() {
                 className="hover:text-emerald-700 transition-colors"
               >
                 Drop-off Locator
-              </button>
-              <button
-                onClick={() => setActiveTab('settings')}
-                className="hover:text-emerald-700 transition-colors"
-              >
-                Settings
               </button>
             </div>
           </div>
