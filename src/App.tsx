@@ -11,6 +11,7 @@ import { DisposalCentersPage } from './components/pages/DisposalCentersPage';
 import { WasteGuidePage } from './components/pages/WasteGuidePage';
 import { ResponsibleAIPage } from './components/pages/ResponsibleAIPage';
 import { SAMPLE_METRICS, SAMPLE_ACHIEVEMENTS } from './services/sampleData';
+import { analyzeWasteImage } from './services/AIService';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShieldCheck, Heart } from 'lucide-react';
 
@@ -18,6 +19,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [currentAnalysis, setCurrentAnalysis] = useState<WasteAnalysisResult | null>(null);
   const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
+  const [isReanalyzing, setIsReanalyzing] = useState<boolean>(false);
 
   // User impact statistics with localStorage persistence
   const [metrics, setMetrics] = useState<ImpactMetrics>(() => {
@@ -75,6 +77,24 @@ export default function App() {
 
   const handleResetScan = () => {
     setCurrentAnalysis(null);
+  };
+
+  const handleRefineScan = async (hint: string) => {
+    if (!currentAnalysis?.imageUrl) return;
+    setIsReanalyzing(true);
+    try {
+      const refined = await analyzeWasteImage(
+        currentAnalysis.imageUrl,
+        'image/jpeg',
+        undefined,
+        hint
+      );
+      setCurrentAnalysis(refined);
+    } catch (err) {
+      console.error('Failed to refine waste analysis:', err);
+    } finally {
+      setIsReanalyzing(false);
+    }
   };
 
   // Log scan into impact dashboard
@@ -168,6 +188,8 @@ export default function App() {
                   onResetScan={handleResetScan}
                   onNavigateTab={setActiveTab}
                   onLogScanToImpact={handleLogScanToImpact}
+                  onRefineScan={handleRefineScan}
+                  isReanalyzing={isReanalyzing}
                 />
               ) : (
                 <ScanWastePage

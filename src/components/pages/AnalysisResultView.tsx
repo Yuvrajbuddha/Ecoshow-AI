@@ -24,7 +24,8 @@ import {
   CheckSquare,
   Trash2,
   Layers,
-  HelpCircle
+  HelpCircle,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -34,6 +35,8 @@ interface AnalysisResultViewProps {
   onResetScan: () => void;
   onNavigateTab: (tab: ActiveTab) => void;
   onLogScanToImpact: (result: WasteAnalysisResult) => void;
+  onRefineScan?: (hint: string) => void;
+  isReanalyzing?: boolean;
 }
 
 export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
@@ -41,10 +44,14 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
   onResetScan,
   onNavigateTab,
   onLogScanToImpact,
+  onRefineScan,
+  isReanalyzing = false,
 }) => {
   const [logged, setLogged] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const [refineHint, setRefineHint] = useState('');
+  const [showRefineInput, setShowRefineInput] = useState(false);
   const badgeClasses = getCategoryBadgeClasses(result.category);
 
   // Derive bin configuration based on category or explicit binColor
@@ -396,6 +403,71 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
             />
           </div>
         </div>
+
+        {/* REFINE OR CORRECT ITEM IDENTIFICATION */}
+        {onRefineScan && (
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-emerald-600" />
+                <span className="text-xs font-bold text-slate-800">
+                  Not quite the right item or need clarification?
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRefineInput(!showRefineInput)}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 underline"
+              >
+                {showRefineInput ? 'Close' : 'Refine identification'}
+              </button>
+            </div>
+
+            {showRefineInput && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="space-y-2.5 pt-1"
+              >
+                <p className="text-[11px] text-slate-500">
+                  Give the AI a hint about the item (e.g. "it's a glass perfume bottle", "pizza box lid", "cardboard tube"). The AI will re-examine the photo with this context.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={refineHint}
+                    onChange={(e) => setRefineHint(e.target.value)}
+                    placeholder="e.g. glass beverage bottle, greasy takeout box..."
+                    className="flex-1 text-xs px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-hidden focus:border-emerald-500 text-slate-800"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && refineHint.trim() && !isReanalyzing) {
+                        onRefineScan(refineHint.trim());
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={!refineHint.trim() || isReanalyzing}
+                    onClick={() => onRefineScan(refineHint.trim())}
+                    className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs"
+                  >
+                    {isReanalyzing ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Re-identifying...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Re-identify Item</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </div>
+        )}
       </motion.div>
 
       {/* CORE SECTION 2: WHERE SHOULD YOU SEGREGATE IT? */}

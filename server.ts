@@ -83,47 +83,48 @@ async function generateWithModelFallback(
   ];
   let lastError: any = null;
 
-  // Filter out models currently in active cooldown
-  const now = Date.now();
-  const availableModels = candidateModels.filter((m) => {
-    const cooldownUntil = modelCooldowns.get(m) || 0;
-    return now >= cooldownUntil;
-  });
+  for (let i = 0; i < candidateModels.length; i++) {
+    const model = candidateModels[i];
+    const cooldownUntil = modelCooldowns.get(model) || 0;
+    if (Date.now() < cooldownUntil) {
+      console.info(`[Gemini SDK Invocation] Skipping model "${model}" due to active cooldown until ${new Date(cooldownUntil).toISOString()}`);
+      continue;
+    }
 
-  const modelsToTry = availableModels.length > 0 ? availableModels : candidateModels;
+    // Try up to 2 attempts for the primary model to handle transient network blips
+    const maxAttempts = model === "gemini-3.1-flash-lite" ? 2 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const attemptStartTime = Date.now();
+      console.info(`[Gemini SDK Invocation] Attempt ${attempt}/${maxAttempts} with model "${model}" (Trace: ${traceId || 'none'})`);
+      try {
+        const response = await ai.models.generateContent({
+          ...options,
+          model,
+        });
+        const attemptDuration = Date.now() - attemptStartTime;
+        console.info(`[Gemini SDK Invocation] Model "${model}" completed successfully in ${attemptDuration}ms`);
+        // Clear any previous cooldown on success
+        modelCooldowns.delete(model);
+        return { response, modelUsed: model };
+      } catch (err: any) {
+        lastError = err;
+        const attemptDuration = Date.now() - attemptStartTime;
+        const statusCode = err?.status || err?.code || 500;
+        const errMsg = String(err?.message || "");
+        const isQuota = statusCode === 429 || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota");
 
-  for (let i = 0; i < modelsToTry.length; i++) {
-    const model = modelsToTry[i];
-    const attemptStartTime = Date.now();
-    console.info(`[Gemini SDK Invocation] Attempt ${i + 1}/${modelsToTry.length} with model "${model}" (Trace: ${traceId || 'none'})`);
-    try {
-      const response = await ai.models.generateContent({
-        ...options,
-        model,
-      });
-      const attemptDuration = Date.now() - attemptStartTime;
-      console.info(`[Gemini SDK Invocation] Model "${model}" completed successfully in ${attemptDuration}ms`);
-      // Clear any previous cooldown on success
-      modelCooldowns.delete(model);
-      return { response, modelUsed: model };
-    } catch (err: any) {
-      lastError = err;
-      const attemptDuration = Date.now() - attemptStartTime;
-      const statusCode = err?.status || err?.code || 500;
-      const errMsg = String(err?.message || "");
-      const isQuota = statusCode === 429 || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota");
-
-      if (isQuota) {
-        // Set a 60-second cooldown so we do not repeatedly spam the rate-limited model
-        modelCooldowns.set(model, Date.now() + 60_000);
-        console.info(`[Gemini SDK Invocation] Model "${model}" reached free tier rate limit (429) after ${attemptDuration}ms. Switching to fallback.`);
-      } else {
-        console.info(`[Gemini SDK Invocation] Model "${model}" attempt completed with status ${statusCode} after ${attemptDuration}ms. Proceeding to fallback.`);
-      }
-
-      if (i < modelsToTry.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        continue;
+        if (isQuota) {
+          // If gemini-3.1-flash-lite hits a brief rate limit, use a short 3-second cooldown; for other models use 30s
+          const cooldownDuration = model === "gemini-3.1-flash-lite" ? 3000 : 30_000;
+          modelCooldowns.set(model, Date.now() + cooldownDuration);
+          console.info(`[Gemini SDK Invocation] Model "${model}" reached rate limit (429) after ${attemptDuration}ms. Cooldown set for ${cooldownDuration}ms.`);
+          break; // break retry loop for this model and try next candidate
+        } else {
+          console.info(`[Gemini SDK Invocation] Model "${model}" attempt ${attempt} failed with status ${statusCode} (${errMsg.slice(0, 100)}) after ${attemptDuration}ms.`);
+          if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          }
+        }
       }
     }
   }
@@ -360,15 +361,26 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
 
 // API: Analyze Waste Image (Multimodal Vision)
 app.post("/api/analyze-waste", async (req: Request, res: Response): Promise<void> => {
+  const serverTime = new Date().toISOString();
+  const clientSessionId = (req.headers["x-session-id"] as string) || req.body?.sessionId || req.body?.session_id || `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const clientReqId = (req.headers["x-client-request-id"] as string) || req.body?.requestId || `scan-req-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const clientTimestamp = (req.headers["x-request-timestamp"] as string) || req.body?.timestamp || serverTime;
+  const clientSalt = (req.headers["x-request-salt"] as string) || req.body?.salt || `salt_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
   const traceId = `srv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const startTime = Date.now();
-  const clientReqId = (req.headers["x-client-request-id"] as string) || "none";
 
   // Prevent any intermediary, reverse proxy, or browser caching
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+  res.setHeader("X-Client-Request-Id", clientReqId);
+  res.setHeader("X-Session-Id", clientSessionId);
+  res.setHeader("X-Request-Timestamp", clientTimestamp);
+  res.setHeader("X-Request-Salt", clientSalt);
   res.setHeader("X-Server-Trace-Id", traceId);
+
+  // Mandatory audit log: Log the request ID, session ID, and timestamp for every scan
+  console.log(`🔍 [Scan Analysis Server] Request ID: ${clientReqId} | Session ID: ${clientSessionId} | Timestamp: ${clientTimestamp} | Salt: ${clientSalt} | Trace: ${traceId}`);
 
   try {
     const { imageBase64, mimeType = "image/jpeg", hint, sampleId, forceMock } = req.body;
@@ -402,7 +414,8 @@ app.post("/api/analyze-waste", async (req: Request, res: Response): Promise<void
     console.group(`📡 [Server Gemini Vision Lifecycle | Trace: ${traceId}]`);
     console.log("─── STEP 1: INCOMING REQUEST METADATA ───");
     console.log("Client Request ID:", clientReqId);
-    console.log("Timestamp:", new Date().toISOString());
+    console.log("Request Timestamp:", clientTimestamp);
+    console.log("Cache-Busting Salt:", clientSalt);
     console.log("Image Fingerprint (Hash & Length):", imgFingerprint);
     console.log("Normalized MIME Type:", normalizedMimeType);
     console.log("Base64 Character Count:", cleanBase64.length);
@@ -424,51 +437,84 @@ app.post("/api/analyze-waste", async (req: Request, res: Response): Promise<void
       const result = getFallbackAnalysis(hint, sampleId, imageBase64);
       console.log("Early Fallback Result Generated:\n", JSON.stringify(result, null, 2));
       console.groupEnd();
-      res.json({ success: true, result, isDemoMode: true });
+      res.json({
+        success: true,
+        result,
+        isDemoMode: true,
+        requestId: clientReqId,
+        sessionId: clientSessionId,
+        session_id: clientSessionId,
+        timestamp: clientTimestamp,
+        salt: clientSalt,
+      });
       return;
     }
 
     const promptText = `You are EcoSort AI, a multimodal waste classification and segregation vision model.
 
-CRITICAL INSTRUCTIONS FOR PROCESSING THIS IMAGE:
-1. Carefully inspect the EXACT visual pixels of the image provided in inlineData.
-2. Do NOT provide a generic, static, or default classification.
-3. Observe all specific visual details: object shape, color, surface texture, branding or labels, transparent vs opaque material, visible contamination (grease, food residue), and packaging type.
-4. Classify the exact item visible in this specific photo.
-5. If the image does not depict a recognizable physical waste item, accurately describe what is visually present in "detectedItem".
+[session_id: "${clientSessionId}"]
+Session ID / Nonce: ${clientSessionId}
+Request ID: ${clientReqId}
+Timestamp: ${clientTimestamp}
+Salt: ${clientSalt}
 
-Provide a JSON response with:
-1. WHAT IS THE KIND OF WASTE?
-- detectedItem: Specific name of the item in the photo (e.g. "PET Plastic Water Bottle", "Organic Banana Peel", "Corrugated Cardboard Box", "Lithium-Ion Phone Battery", "Aluminum Soda Can").
-- material: Exact physical material composition (e.g. "Polyethylene Terephthalate (PET #1)", "Organic Plant Biomass", "Cellulose Paperboard", "Aluminum Alloy").
-- category: Exactly one of: 'recyclable', 'organic', 'ewaste', 'hazardous', 'general', 'context_dependent'.
-- categoryLabel: Concise human stream label (e.g. 'Dry Recyclable / Plastics', 'Organic / Food & Compost', 'E-Waste / Electronics', 'Hazardous / Chemical', 'General Waste / Landfill').
+CRITICAL WASTE IDENTIFICATION DIRECTIVES:
+1. PRIMARY OBJECT IDENTIFICATION:
+   - Identify the primary disposable item, product packaging, food remnant, container, electronic item, or material visible in the photograph.
+   - Even if the photo is taken on a table, desk, counter, floor, outdoors, or held in a person's hand, focus specifically on the disposable/waste object itself (do NOT classify the table, room, or hand as the detectedItem).
+   - If the item is empty, crumpled, opened, or partially consumed, identify what the original item was and its physical material.
+   - If multiple waste items are visible, identify the most prominent item in the foreground and mention other components (like cap or lid) in segregationSteps.
 
-2. WHERE SHOULD THE USER SEGREGATE IT?
-- binColor: Specific target receptacle name (e.g. 'Blue Bin (Dry Recyclables)', 'Green Bin (Organic / Compost)', 'Yellow Bin (E-Waste & Electronics)', 'Red Bin (Hazardous Collection)', 'Black Bin (General Trash)').
-- whereToSegregate: 1-2 direct sentences explaining where to place this item.
-- segregationSteps: Array of 3 to 4 sequential, actionable steps to prepare and sort this item properly (e.g. "1. Empty residual contents", "2. Rinse clean", "3. Keep lid attached", "4. Deposit in blue bin").
+2. DETERMINE EXACTLY WHAT KIND OF WASTE THIS IS:
+   - detectedItem: Give the clear, specific product/waste name (e.g. "PET Plastic Water Bottle", "Organic Banana Peel", "Corrugated Cardboard Box", "Lithium-Ion AA Battery", "Aluminum Soda Can", "Multi-Layer Snack Chip Bag", "Glass Beverage Bottle", "Styrofoam Food Container", "Electronic Charging Cable", "Coffee Grounds & Filter").
+   - material: Give the exact physical composition (e.g. "Polyethylene Terephthalate (#1 PET)", "Organic Plant Biomass", "Cellulose Paperboard", "Aluminum Alloy", "High-Density Polyethylene (#2 HDPE)", "Multi-Layer Plastic-Foil Composite", "Soda-Lime Glass", "Expanded Polystyrene Foam (#6 PS)").
+   - category: MUST be exactly one of: 'recyclable', 'organic', 'ewaste', 'hazardous', 'general', 'context_dependent'.
+     * 'recyclable': Clean rigid plastics (#1 PET, #2 HDPE, #5 PP), clean paper, cardboard, glass containers, aluminum/steel cans.
+     * 'organic': Food remnants, peels, vegetable/fruit scraps, coffee grounds, garden clippings, 100% compostable items.
+     * 'ewaste': Electronics, cables, chargers, headphones, circuit boards, small electrical appliances.
+     * 'hazardous': Batteries, spray aerosol cans, paints, motor oil, toxic cleaners, fluorescent bulbs, medical sharps.
+     * 'general': Non-recyclable packaging, multi-layer foil pouches, food-greased napkins, composite items, styrofoam, landfill trash.
+     * 'context_dependent': Items that require inspection (e.g. greasy pizza box: clean lid is recyclable, soiled base is compost or trash; dirty bottles that require rinsing).
+   - categoryLabel: Concise human stream title (e.g. 'Dry Recyclables / Plastics', 'Organic / Food & Compost', 'E-Waste / Electronics', 'Hazardous Collection', 'General Waste / Landfill').
 
-Additional required metrics:
-- confidence: Integer 65-99 indicating visual classification certainty.
-- confidenceLevel: 'high' (>=85), 'medium' (65-84), or 'low' (<65).
-- recommendedDisposal: Summary disposal recommendation.
-- whyThisResult: Scientific and circular economy rationale based on this item's material.
-- ecoTip: Actionable practical environmental tip.
-- ecoActionScore: Integer 60-100.
-- specialHandlingRequired: Boolean (true if batteries, electronics, chemicals, sharps, medical).
-- specialHandlingNotes: Notes if special handling is needed, otherwise null.
-- contaminationRisk: 'none', 'low', 'moderate', or 'high'.
-- recyclingCode: Resin/recycling code (e.g. 'PET 1', 'HDPE 2', 'PAP 20', 'ALU 41') or null.
-- alternativeUses: Array of 2-3 creative upcycling or repurposing ideas.
-- carbonSavedKg: Estimated number of kg CO2e saved through correct diversion.
+3. ACCURATE DISPOSAL & SEGREGATION:
+   - binColor: Target disposal receptacle (e.g. 'Blue Bin (Dry Recyclables)', 'Green Bin (Organic / Compost)', 'Yellow Bin (E-Waste & Electronics)', 'Red Bin (Hazardous Collection)', 'Black Bin (General Trash)').
+   - whereToSegregate: 1-2 direct sentences stating the target bin and disposal method.
+   - segregationSteps: Array of 3 to 4 sequential, actionable steps (e.g. ["1. Empty any residual liquid", "2. Rinse clean with water", "3. Keep lid attached", "4. Deposit into Blue Bin"]).
 
-${hint ? `User note / context: "${hint}".` : ""}
+4. ACCURACY & CONFIDENCE:
+   - confidence: Integer 70-98 indicating visual recognition confidence.
+   - confidenceLevel: 'high' (>=85) or 'medium' (<85).
+   - recommendedDisposal: Summary disposal guidance.
+   - whyThisResult: Educational explanation of why this item belongs in this waste category.
+   - ecoTip: Practical reduction, reuse, or sorting tip.
+   - ecoActionScore: Integer 70-98.
+   - specialHandlingRequired: Boolean (true if batteries, electronics, chemicals, sharps, medical).
+   - specialHandlingNotes: Notes if special handling is needed, otherwise null.
+   - contaminationRisk: 'none', 'low', 'moderate', or 'high'.
+   - recyclingCode: SPI code (e.g. '#1 PET', '#2 HDPE', '#5 PP', 'ALU 41', 'PAP 20', 'GL 70') or null.
+   - alternativeUses: Array of 2 creative upcycling or repurposing ideas.
+   - carbonSavedKg: Estimated number of kg CO2e saved through correct diversion (float e.g. 0.25).
+
+${hint ? `User provided clarification / hint: "${hint}". Use this context to assist visual identification.` : ""}
 ${sampleId ? `Item reference: "${sampleId}".` : ""}
 
 Respond ONLY with valid JSON.`;
 
+    const systemInstruction = `You are EcoSort AI, a specialist multimodal waste classification and segregation vision model.
+Analyze the provided photograph carefully to determine:
+1. What kind of waste item is shown (item name, material composition, and disposal stream).
+2. Exactly how and where the user should segregate or recycle it.
+Focus on the primary disposable object in the photograph. Base your analysis on the actual pixel data of this submission.`;
+
     console.log("─── STEP 2: SPECIFIC PAYLOAD TRANSMITTED TO GEMINI API ───");
+    console.log("Request Freshness Token:", {
+      sessionId: clientSessionId,
+      requestId: clientReqId,
+      timestamp: clientTimestamp,
+      salt: clientSalt,
+    });
+    console.log("System Instruction:\n", systemInstruction);
     console.log("Contents InlineData:", {
       mimeType: normalizedMimeType,
       dataLength: cleanBase64.length,
@@ -494,6 +540,7 @@ Respond ONLY with valid JSON.`;
           },
         ],
         config: {
+          systemInstruction,
           responseMimeType: "application/json",
         },
       },
@@ -581,7 +628,18 @@ Respond ONLY with valid JSON.`;
     console.log("Item:", result.detectedItem, "| Stream:", result.category, "| Bin:", result.binColor, "| Confidence:", `${result.confidence}%`);
     console.groupEnd();
 
-    res.json({ success: true, result, isDemoMode: false, modelUsed, durationMs });
+    res.json({
+      success: true,
+      result,
+      isDemoMode: false,
+      modelUsed,
+      durationMs,
+      requestId: clientReqId,
+      sessionId: clientSessionId,
+      session_id: clientSessionId,
+      timestamp: clientTimestamp,
+      salt: clientSalt,
+    });
   } catch (error) {
     const durationMs = Date.now() - startTime;
     const errMsg = (error as any)?.message || String(error || "");
@@ -594,6 +652,11 @@ Respond ONLY with valid JSON.`;
       success: true,
       result: fallback,
       isDemoMode: true,
+      requestId: clientReqId,
+      sessionId: clientSessionId,
+      session_id: clientSessionId,
+      timestamp: clientTimestamp,
+      salt: clientSalt,
       fallbackReason: isQuota
         ? "Gemini API daily free tier quota was exceeded. Provided smart localized segregation guidance."
         : "Live AI model temporarily busy. Provided smart localized segregation guidance.",

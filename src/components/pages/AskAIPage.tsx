@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage } from '../../types';
-import { aiService } from '../../services/apiClient';
+import { aiService } from '../../services/AIService';
 import { optimizeImageForAI } from '../../lib/imageOptimizer';
 import { 
   MessageSquare, 

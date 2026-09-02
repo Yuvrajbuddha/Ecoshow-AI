@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { WasteAnalysisResult } from '../../types';
-import { aiService } from '../../services/apiClient';
+import { aiService } from '../../services/AIService';
 import { SAMPLE_WASTE_ITEMS } from '../../services/sampleData';
 import { optimizeImageForAI } from '../../lib/imageOptimizer';
 import { 
@@ -244,8 +244,15 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
   const capturePhoto = async () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
-    const width = video.videoWidth || 640;
-    const height = video.videoHeight || 480;
+    
+    // Ensure the video stream has actual dimensions and ready frame
+    if (video.videoWidth <= 0 || video.videoHeight <= 0 || video.readyState < 2) {
+      setErrorMessage('Camera preview is still preparing frames. Please wait a second and press the shutter again.');
+      return;
+    }
+
+    const width = video.videoWidth;
+    const height = video.videoHeight;
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -260,14 +267,14 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     // Verify captured image blob size is greater than 0 before processing
     const rawPayload = (rawDataUrl.includes(',') ? rawDataUrl.split(',')[1] : rawDataUrl).replace(/\s+/g, '');
     const rawByteSize = Math.round((rawPayload.length * 3) / 4);
-    if (!rawPayload || rawByteSize <= 0) {
-      setErrorMessage('Camera capture produced an empty image (0 bytes). Please try taking the picture again.');
+    if (!rawPayload || rawByteSize <= 100) {
+      setErrorMessage('Camera capture produced an empty or blank image. Please try taking the picture again.');
       return;
     }
     
     try {
       setIsAnalyzing(true);
-      const optimized = await optimizeImageForAI(rawDataUrl, 1024, 0.85);
+      const optimized = await optimizeImageForAI(rawDataUrl, 1024, 0.88);
       setSelectedImage(optimized.dataUrl);
       setSelectedMimeType(optimized.mimeType);
       runAnalysis(optimized.dataUrl, optimized.mimeType, undefined, userHint);
@@ -298,9 +305,12 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       return;
     }
 
+    const scanStartTime = new Date().toISOString();
+    console.log(`📸 [ScanWastePage] Initiating waste image scan | Timestamp: ${scanStartTime} | MIME: ${mimeType}`);
+
     // 2. Diagnostic log printing the actual base64 string being sent to the backend before the API call is made
     console.group('🔍 [ScanWastePage] Diagnostic: Pre-API Call Base64 Payload');
-    console.log('Timestamp:', new Date().toISOString());
+    console.log('Timestamp:', scanStartTime);
     console.log('Blob Size Check: PASSED (> 0 bytes)');
     console.log('Calculated Blob Size:', `${estimatedBlobBytes.toLocaleString()} bytes`);
     console.log('Base64 Character Length:', cleanBase64.length);

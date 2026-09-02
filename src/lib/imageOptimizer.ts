@@ -9,16 +9,63 @@
 export async function optimizeImageForAI(
   input: File | Blob | string,
   maxDimension = 1024,
-  quality = 0.85
+  quality = 0.88
 ): Promise<{ base64: string; mimeType: string; dataUrl: string }> {
+  // 1. If input is File/Blob and createImageBitmap is available, use fast native decoding
+  if (typeof input !== 'string' && typeof window !== 'undefined' && 'createImageBitmap' in window) {
+    try {
+      const bitmap = await createImageBitmap(input);
+      let width = bitmap.width;
+      let height = bitmap.height;
+
+      if (width > 0 && height > 0) {
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(bitmap, 0, 0, width, height);
+          bitmap.close();
+
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          const cleanBase64 = (dataUrl.split(',')[1] || '').replace(/\s+/g, '');
+          if (cleanBase64.length > 50) {
+            return {
+              base64: cleanBase64,
+              mimeType: 'image/jpeg',
+              dataUrl,
+            };
+          }
+        }
+      }
+    } catch (bitmapErr) {
+      console.warn('createImageBitmap fallback to standard image loader:', bitmapErr);
+    }
+  }
+
+  // 2. Standard HTMLImageElement / FileReader fallback
   return new Promise((resolve, reject) => {
-    const processImg = (img: HTMLImageElement) => {
+    const processImg = (img: HTMLImageElement, originalDataUrl?: string) => {
       let width = img.naturalWidth || img.width;
       let height = img.naturalHeight || img.height;
 
       if (!width || !height) {
-        width = 640;
-        height = 480;
+        width = 800;
+        height = 600;
       }
 
       // Calculate aspect-preserving dimensions capped at maxDimension
@@ -37,17 +84,16 @@ export async function optimizeImageForAI(
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        // If 2D context fails, return original dataUrl if available
-        if (typeof input === 'string') {
-          const clean = input.includes(',') ? input.split(',')[1].replace(/\s+/g, '') : input.replace(/\s+/g, '');
+        if (originalDataUrl) {
+          const clean = originalDataUrl.includes(',') ? originalDataUrl.split(',')[1].replace(/\s+/g, '') : originalDataUrl.replace(/\s+/g, '');
           resolve({
             base64: clean,
             mimeType: 'image/jpeg',
-            dataUrl: input,
+            dataUrl: originalDataUrl,
           });
-        } else {
-          reject(new Error('Canvas 2D context unavailable'));
+          return;
         }
+        reject(new Error('Canvas 2D context unavailable'));
         return;
       }
 
@@ -75,9 +121,8 @@ export async function optimizeImageForAI(
       if (!input.startsWith('data:')) {
         img.crossOrigin = 'anonymous';
       }
-      img.onload = () => processImg(img);
+      img.onload = () => processImg(img, input);
       img.onerror = () => {
-        // Fallback: resolve as-is if image fails loading
         const clean = (input.includes(',') ? input.split(',')[1] : input).replace(/\s+/g, '');
         resolve({
           base64: clean,
@@ -91,12 +136,12 @@ export async function optimizeImageForAI(
       reader.onload = () => {
         const result = reader.result as string;
         const img = new Image();
-        img.onload = () => processImg(img);
+        img.onload = () => processImg(img, result);
         img.onerror = () => {
           const clean = (result.includes(',') ? result.split(',')[1] : result).replace(/\s+/g, '');
           resolve({
             base64: clean,
-            mimeType: 'image/jpeg',
+            mimeType: input.type || 'image/jpeg',
             dataUrl: result,
           });
         };
