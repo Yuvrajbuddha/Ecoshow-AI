@@ -61,6 +61,8 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Clear input value so selecting the same file or retrying fires change event reliably
+    e.target.value = '';
     if (file) {
       processFile(file);
     }
@@ -68,9 +70,16 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
 
   const processFile = async (file: File) => {
     setErrorMessage(null);
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!validTypes.includes(file.type)) {
-      setErrorMessage('Please upload a valid JPG, PNG, or WEBP image.');
+
+    // Verify blob size is greater than 0 before processing
+    if (!file || file.size <= 0) {
+      setErrorMessage('Cannot process image: The selected file is empty (0 bytes). Please upload a valid image.');
+      return;
+    }
+
+    const isImage = file.type.toLowerCase().startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|bmp|gif)$/i.test(file.name);
+    if (!isImage) {
+      setErrorMessage('Please upload a valid image file (JPG, PNG, WEBP, or HEIC).');
       return;
     }
 
@@ -79,6 +88,14 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       setAnalysisStep(0);
       // Downscale large smartphone photos down to crisp ~1024px JPEGs (typically ~100KB)
       const optimized = await optimizeImageForAI(file, 1024, 0.85);
+      
+      // Verify optimized blob/base64 size
+      const optBase64 = optimized.base64.replace(/\s+/g, '');
+      const optByteSize = Math.round((optBase64.length * 3) / 4);
+      if (!optBase64 || optByteSize <= 0) {
+        throw new Error('Image optimization resulted in empty data (0 bytes).');
+      }
+
       setSelectedImage(optimized.dataUrl);
       setSelectedMimeType(optimized.mimeType);
       runAnalysis(optimized.dataUrl, optimized.mimeType, undefined, userHint);
@@ -88,10 +105,15 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       // Fallback: read directly if canvas resize encounters any issue
       const reader = new FileReader();
       reader.onload = () => {
-        const base64 = reader.result as string;
+        const base64 = (reader.result as string).replace(/\s+/g, '');
+        const rawByteSize = Math.round((base64.split(',')[1] || base64).length * 3 / 4);
+        if (!base64 || rawByteSize <= 0) {
+          setErrorMessage('Cannot process image: The read image data is empty (0 bytes). Please try another photo.');
+          return;
+        }
         setSelectedImage(base64);
-        setSelectedMimeType(file.type);
-        runAnalysis(base64, file.type, undefined, userHint);
+        setSelectedMimeType(file.type || 'image/jpeg');
+        runAnalysis(base64, file.type || 'image/jpeg', undefined, userHint);
       };
       reader.onerror = () => {
         setErrorMessage('Failed to read image. Please try again.');
@@ -234,6 +256,14 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     
     // Stop camera stream cleanly
     stopCamera();
+
+    // Verify captured image blob size is greater than 0 before processing
+    const rawPayload = (rawDataUrl.includes(',') ? rawDataUrl.split(',')[1] : rawDataUrl).replace(/\s+/g, '');
+    const rawByteSize = Math.round((rawPayload.length * 3) / 4);
+    if (!rawPayload || rawByteSize <= 0) {
+      setErrorMessage('Camera capture produced an empty image (0 bytes). Please try taking the picture again.');
+      return;
+    }
     
     try {
       setIsAnalyzing(true);
@@ -255,10 +285,34 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     sampleKey?: string,
     hintText?: string
   ) => {
+    setErrorMessage(null);
+
+    // 1. Verify that the image blob size is greater than 0 before processing
+    const cleanBase64 = (imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64).replace(/\s+/g, '');
+    const estimatedBlobBytes = Math.round((cleanBase64.length * 3) / 4);
+
+    if (!cleanBase64 || cleanBase64.length === 0 || estimatedBlobBytes <= 0) {
+      console.error('❌ [ScanWastePage] Blob size validation failed: 0 bytes detected. Aborting API call.');
+      setErrorMessage('Cannot process image: The image data is empty (0 bytes). Please upload or capture a valid photo.');
+      setIsAnalyzing(false);
+      return;
+    }
+
+    // 2. Diagnostic log printing the actual base64 string being sent to the backend before the API call is made
+    console.group('🔍 [ScanWastePage] Diagnostic: Pre-API Call Base64 Payload');
+    console.log('Timestamp:', new Date().toISOString());
+    console.log('Blob Size Check: PASSED (> 0 bytes)');
+    console.log('Calculated Blob Size:', `${estimatedBlobBytes.toLocaleString()} bytes`);
+    console.log('Base64 Character Length:', cleanBase64.length);
+    console.log('MIME Type:', mimeType);
+    console.log('Sample Key:', sampleKey || 'none');
+    console.log('User Hint:', hintText || 'none');
+    console.log('Actual Base64 String Being Sent to Backend:\n', imageBase64);
+    console.groupEnd();
+
     setIsAnalyzing(true);
     setSelectedImage(imageBase64);
     setAnalysisStep(0);
-    setErrorMessage(null);
 
     // Step simulation timers for rich user feedback
     const interval = setInterval(() => {
@@ -577,7 +631,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept="image/*,.jpg,.jpeg,.png,.webp,.heic,.heif"
                 onChange={handleFileSelect}
                 className="hidden"
                 id="file-upload-input"
@@ -587,7 +641,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
               <input
                 ref={cameraCaptureInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,.jpg,.jpeg,.png,.webp"
                 capture="environment"
                 onChange={handleFileSelect}
                 className="hidden"

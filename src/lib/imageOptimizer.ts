@@ -7,7 +7,7 @@
  * and high network latencies, while retaining high detail for AI vision.
  */
 export async function optimizeImageForAI(
-  input: File | string,
+  input: File | Blob | string,
   maxDimension = 1024,
   quality = 0.85
 ): Promise<{ base64: string; mimeType: string; dataUrl: string }> {
@@ -39,9 +39,9 @@ export async function optimizeImageForAI(
       if (!ctx) {
         // If 2D context fails, return original dataUrl if available
         if (typeof input === 'string') {
-          const parts = input.split(',');
+          const clean = input.includes(',') ? input.split(',')[1].replace(/\s+/g, '') : input.replace(/\s+/g, '');
           resolve({
-            base64: parts[1] || input,
+            base64: clean,
             mimeType: 'image/jpeg',
             dataUrl: input,
           });
@@ -51,17 +51,17 @@ export async function optimizeImageForAI(
         return;
       }
 
-      // Fill with white background in case of transparent PNG/WEBP
+      // Fill with clean white background in case of transparent PNG/WEBP
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, width, height);
 
-      // Draw downscaled image with smooth interpolation
+      // Draw downscaled image with smooth high-quality interpolation
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, width, height);
 
       const dataUrl = canvas.toDataURL('image/jpeg', quality);
-      const base64 = dataUrl.split(',')[1] || '';
+      const base64 = (dataUrl.split(',')[1] || '').replace(/\s+/g, '');
 
       resolve({
         base64,
@@ -72,11 +72,13 @@ export async function optimizeImageForAI(
 
     if (typeof input === 'string') {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      if (!input.startsWith('data:')) {
+        img.crossOrigin = 'anonymous';
+      }
       img.onload = () => processImg(img);
       img.onerror = () => {
         // Fallback: resolve as-is if image fails loading
-        const clean = input.includes(',') ? input.split(',')[1] : input;
+        const clean = (input.includes(',') ? input.split(',')[1] : input).replace(/\s+/g, '');
         resolve({
           base64: clean,
           mimeType: 'image/jpeg',
@@ -91,7 +93,7 @@ export async function optimizeImageForAI(
         const img = new Image();
         img.onload = () => processImg(img);
         img.onerror = () => {
-          const clean = result.includes(',') ? result.split(',')[1] : result;
+          const clean = (result.includes(',') ? result.split(',')[1] : result).replace(/\s+/g, '');
           resolve({
             base64: clean,
             mimeType: 'image/jpeg',
