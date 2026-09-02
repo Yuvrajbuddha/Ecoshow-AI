@@ -58,11 +58,12 @@ async function generateWithModelFallback(
     config?: any;
   }
 ): Promise<any> {
+  // gemini-3.1-flash-lite has high availability, fast response times, and generous quota
+  // followed by gemini-flash-latest and gemini-3.8-flash as reliable fallbacks
   const candidateModels = [
-    "gemini-2.5-flash",
-    "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
     "gemini-flash-latest",
+    "gemini-3.8-flash",
   ];
   let lastError: any = null;
 
@@ -76,10 +77,12 @@ async function generateWithModelFallback(
       return response;
     } catch (err: any) {
       lastError = err;
-      const errMsg = err?.message || String(err);
-      console.warn(`Model ${model} encountered error: ${errMsg}`);
+      const statusCode = err?.status || err?.code || 500;
+      console.warn(`[AI Service] Primary attempt with ${model} returned status ${statusCode}.`);
       if (i < candidateModels.length - 1) {
-        console.warn(`Attempting fallback model: ${candidateModels[i + 1]}...`);
+        // Short pause to allow transient spikes to clear
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        console.info(`[AI Service] Switching to alternate model: ${candidateModels[i + 1]}`);
         continue;
       }
     }
