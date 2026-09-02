@@ -50,7 +50,7 @@ function getGeminiClient(): GoogleGenAI | null {
   return geminiClient;
 }
 
-// Resilient model invocation with automatic fallbacks for 503 high-demand or rate limits
+// Resilient model invocation with automatic fallbacks for 503 high-demand, rate limits, or errors
 async function generateWithModelFallback(
   ai: GoogleGenAI,
   options: {
@@ -58,7 +58,12 @@ async function generateWithModelFallback(
     config?: any;
   }
 ): Promise<any> {
-  const candidateModels = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+  const candidateModels = [
+    "gemini-2.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+  ];
   let lastError: any = null;
 
   for (let i = 0; i < candidateModels.length; i++) {
@@ -72,23 +77,11 @@ async function generateWithModelFallback(
     } catch (err: any) {
       lastError = err;
       const errMsg = err?.message || String(err);
-      const is503OrOverloaded =
-        err?.status === "UNAVAILABLE" ||
-        err?.code === 503 ||
-        errMsg.includes("503") ||
-        errMsg.toLowerCase().includes("high demand") ||
-        errMsg.toLowerCase().includes("unavailable") ||
-        errMsg.includes("429") ||
-        errMsg.toLowerCase().includes("quota");
-
-      if (is503OrOverloaded && i < candidateModels.length - 1) {
-        console.warn(
-          `Model ${model} is experiencing temporary high demand, trying fallback model ${candidateModels[i + 1]}...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, 300));
+      console.warn(`Model ${model} encountered error: ${errMsg}`);
+      if (i < candidateModels.length - 1) {
+        console.warn(`Attempting fallback model: ${candidateModels[i + 1]}...`);
         continue;
       }
-      throw err;
     }
   }
 
@@ -238,7 +231,7 @@ CRITICAL INSTRUCTIONS:
           },
         },
         {
-          text: `Please identify and analyze this item for responsible waste segregation. ${hint ? `Additional hint: ${hint}` : ""}`,
+          text: `Please identify and analyze this item for responsible waste segregation. ${hint ? `Additional hint: ${hint}.` : ""} ${sampleId ? `Item context: ${sampleId}.` : ""}`,
         },
       ],
       config: {
@@ -386,10 +379,14 @@ ${ragContextText || "General municipal waste sorting principles apply."}`;
 
     const parts: any[] = [];
     if (imageBase64) {
-      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+      let cleanBase64 = String(imageBase64);
+      if (cleanBase64.includes(",")) {
+        cleanBase64 = cleanBase64.split(",")[1];
+      }
+      cleanBase64 = cleanBase64.trim();
       parts.push({
         inlineData: {
-          mimeType: mimeType,
+          mimeType: mimeType || "image/jpeg",
           data: cleanBase64,
         },
       });
@@ -399,7 +396,7 @@ ${ragContextText || "General municipal waste sorting principles apply."}`;
     });
 
     const chatResponse = await generateWithModelFallback(ai, {
-      contents: { parts },
+      contents: parts,
       config: {
         systemInstruction,
         temperature: 0.7,

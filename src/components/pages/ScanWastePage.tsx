@@ -36,6 +36,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('environment');
   const [cameraBlocked, setCameraBlocked] = useState(false);
+  const [userHint, setUserHint] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraCaptureInputRef = useRef<HTMLInputElement>(null);
@@ -82,7 +83,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     reader.onload = () => {
       const base64 = reader.result as string;
       setSelectedImage(base64);
-      runAnalysis(base64, file.type);
+      runAnalysis(base64, file.type, undefined, userHint);
     };
     reader.onerror = () => {
       setErrorMessage('Failed to read image. Please try again.');
@@ -230,14 +231,15 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     setSelectedMimeType('image/jpeg');
     
     // Start analysis with the photo
-    runAnalysis(base64, 'image/jpeg');
+    runAnalysis(base64, 'image/jpeg', undefined, userHint);
   };
 
   // Run analysis workflow
   const runAnalysis = async (
     imageBase64: string,
     mimeType: string,
-    sampleKey?: string
+    sampleKey?: string,
+    hintText?: string
   ) => {
     setIsAnalyzing(true);
     setSelectedImage(imageBase64);
@@ -253,10 +255,11 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     }, 600);
 
     try {
+      const activeHint = hintText !== undefined ? hintText : userHint;
       const response = await aiService.analyzeWaste(
         imageBase64,
         mimeType,
-        undefined,
+        activeHint ? activeHint.trim() : undefined,
         sampleKey
       );
 
@@ -299,7 +302,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       }
       const dataUrl = canvas.toDataURL('image/jpeg');
       setSelectedImage(dataUrl);
-      runAnalysis(dataUrl, 'image/jpeg', sampleKey);
+      runAnalysis(dataUrl, 'image/jpeg', sampleKey, sample.detectedItem);
     }
   };
 
@@ -592,8 +595,20 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
                   </p>
                 </div>
 
+                {/* Optional Hint Input */}
+                <div className="pt-1 max-w-sm mx-auto">
+                  <input
+                    type="text"
+                    id="input-user-hint"
+                    value={userHint}
+                    onChange={(e) => setUserHint(e.target.value)}
+                    placeholder="Optional item hint (e.g. wood plank, AA battery, glass bottle)"
+                    className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-500 focus:outline-hidden text-slate-800 placeholder-slate-400 text-center transition-all shadow-2xs"
+                  />
+                </div>
+
                 {/* Buttons: Take a Photo & Upload Image */}
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-1">
                   <button
                     id="btn-take-photo"
                     onClick={startCamera}
