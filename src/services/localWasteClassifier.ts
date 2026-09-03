@@ -37,6 +37,8 @@ export function classifyWasteLocally(
     material: string;
     category: WasteCategory;
     categoryLabel: string;
+    recyclability?: string;
+    disposalInstructions?: string;
     binColor: string;
     whereToSegregate: string;
     segregationSteps: string[];
@@ -51,6 +53,7 @@ export function classifyWasteLocally(
     recyclingCode?: string;
     alternativeUses: string[];
     carbonSavedKg: number;
+    environmentalImpact?: string;
   }
 
   const rules: Rule[] = [
@@ -280,17 +283,31 @@ export function classifyWasteLocally(
   if (query) {
     for (const rule of rules) {
       if (rule.keywords.some(kw => query.includes(kw))) {
+        const defaultRecyclability =
+          rule.category === 'recyclable'
+            ? 'Recyclable (Curbside Collection)'
+            : rule.category === 'organic'
+            ? '100% Biodegradable & Compostable'
+            : rule.category === 'ewaste'
+            ? 'Specialized E-Waste Drop-Off'
+            : rule.category === 'hazardous'
+            ? 'Hazardous Material (Certified Drop-Off Required)'
+            : 'Non-Recyclable (General Residual Trash)';
+
         return {
           id: `local-scan-${Date.now()}`,
           detectedItem: rule.detectedItem,
           material: rule.material,
           category: rule.category,
           categoryLabel: rule.categoryLabel,
+          recyclability: rule.recyclability || defaultRecyclability,
+          disposalInstructions: rule.disposalInstructions || rule.recommendedDisposal,
           binColor: rule.binColor,
           whereToSegregate: rule.whereToSegregate,
           segregationSteps: rule.segregationSteps,
           confidence: rule.confidence,
           confidenceLevel: 'high',
+          environmentalImpact: rule.environmentalImpact || `Diverting this item prevents approximately ${rule.carbonSavedKg || 0.15} kg CO2e greenhouse gas emissions and conserves virgin resources.`,
           recommendedDisposal: rule.recommendedDisposal,
           whyThisResult: rule.whyThisResult,
           ecoTip: rule.ecoTip,
@@ -316,6 +333,8 @@ export function classifyWasteLocally(
     material: 'Mixed / Inspection Needed (Plastic, Paper, or Composite)',
     category: 'context_dependent',
     categoryLabel: 'Context-Dependent / Visual Inspection',
+    recyclability: 'Inspection Required (Clean rigid plastics/paper recyclable; food-soiled non-recyclable)',
+    disposalInstructions: 'Inspect material identification code. Clean, dry containers go into the Blue Bin; composite or food-soiled packaging goes to the Black Bin.',
     binColor: 'Blue Bin (if clean & dry) OR Black Bin (if food-soiled)',
     whereToSegregate: 'Inspect item cleanliness: Place clean, dry paper/plastics/metals in the Blue Bin; place food-soiled or multi-layer packaging in the Black Bin.',
     segregationSteps: [
@@ -326,6 +345,7 @@ export function classifyWasteLocally(
     ],
     confidence: 82,
     confidenceLevel: 'medium',
+    environmentalImpact: 'Sorting items correctly prevents cross-contamination of entire recyclable batches and saves up to 0.15 kg CO2e.',
     recommendedDisposal: 'Inspect resin symbols. Clean single-material items go into dry recycling; composite or food-soiled packaging goes to general waste.',
     whyThisResult: 'Proper segregation depends on the primary material composition and whether the item is free of food contamination.',
     ecoTip: 'When in doubt, check the SPI recycling triangle on the bottom of the container before disposing.',

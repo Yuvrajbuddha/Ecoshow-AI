@@ -10,13 +10,17 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
 export interface WasteAnalysisResult {
   id: string;
-  detectedItem: string;
+  detectedItem: string; // 1. Waste item name
   material: string;
-  category: WasteCategory;
+  category: WasteCategory; // 2. Waste category
   categoryLabel: string;
-  confidence: number; // 0 to 100
+  recyclability: string; // 3. Recyclability status
+  disposalInstructions: string; // 4. Disposal instructions
+  recommendedDisposal: string; // 4. (alias / summary)
+  confidence: number; // 5. Confidence score (0 to 100)
   confidenceLevel: ConfidenceLevel;
-  recommendedDisposal: string;
+  environmentalImpact: string; // 6. Environmental impact summary & carbon avoidance
+  carbonSavedKg?: number; // 6. Numeric kg CO2e saved
   binColor?: string; // e.g. "Blue Bin (Dry Recyclables)", "Green Bin (Organic / Compost)", "Yellow Bin (E-Waste)", "Red Bin (Hazardous)", "Black Bin (General Waste)"
   whereToSegregate?: string; // Direct answer to "Where should have to segregate it?"
   segregationSteps?: string[]; // Step-by-step segregation checklist
@@ -28,7 +32,6 @@ export interface WasteAnalysisResult {
   contaminationRisk?: 'none' | 'low' | 'moderate' | 'high';
   recyclingCode?: string; // e.g. "PET 1"
   alternativeUses?: string[];
-  carbonSavedKg?: number;
   timestamp: string;
   imageUrl?: string;
   isMock?: boolean;

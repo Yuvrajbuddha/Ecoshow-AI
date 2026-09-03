@@ -2,7 +2,6 @@ import { WasteAnalysisResult, ChatMessage } from '../types';
 import { SAMPLE_WASTE_ITEMS } from './sampleData';
 import { classifyWasteLocally } from './localWasteClassifier';
 import { retrieveRagContext } from './wasteKnowledgeBase';
-import { GoogleGenAI } from '@google/genai';
 
 export interface HealthStatus {
   status: string;
@@ -12,14 +11,31 @@ export interface HealthStatus {
 }
 
 /**
- * Generates an RFC4122 v4 UUID or cryptographic nonce to ensure unique session identification
+ * Returns the configured API base URL or an empty string (defaulting to relative routes).
+ * In Google AI Studio, the integrated full-stack Express server runs on the same origin,
+ * so relative URLs (/api/...) work out of the box without requiring external backends.
+ */
+export function getApiBaseUrl(): string {
+  try {
+    const customUrl = (import.meta as any).env?.VITE_API_BASE_URL;
+    if (customUrl && typeof customUrl === 'string' && customUrl.trim() !== '') {
+      return customUrl.trim().replace(/\/+$/, '');
+    }
+  } catch {
+    // In environments without import.meta.env
+  }
+  return '';
+}
+
+/**
+ * Generates an RFC4122 v4 UUID or cryptographic nonce to ensure unique request identification
  */
 export function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     try {
       return crypto.randomUUID();
     } catch {
-      // Fallback if randomUUID fails in specific iframe context
+      // Fallback if randomUUID fails in specific iframe contexts
     }
   }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -32,28 +48,9 @@ export function generateUUID(): string {
 export class AIService {
   private static instance: AIService;
   private isDemoModeForced: boolean = false;
-  private clientGemini: GoogleGenAI | null = null;
 
   private constructor() {
     this.isDemoModeForced = false;
-  }
-
-  private getClientGemini(): GoogleGenAI | null {
-    const clientKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (import.meta as any).env?.VITE_GOOGLE_API_KEY;
-    if (clientKey && clientKey.trim() !== '' && clientKey !== 'MY_GEMINI_API_KEY') {
-      if (!this.clientGemini) {
-        try {
-          this.clientGemini = new GoogleGenAI({
-            apiKey: clientKey,
-            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-          });
-        } catch (e) {
-          console.warn('Failed to construct client Gemini SDK:', e);
-        }
-      }
-      return this.clientGemini;
-    }
-    return null;
   }
 
   public static getInstance(): AIService {
@@ -71,24 +68,37 @@ export class AIService {
     return this.isDemoModeForced;
   }
 
+  /**
+   * Health check contacting server-side health endpoint
+   */
   public async checkHealth(): Promise<HealthStatus> {
+    const apiBase = getApiBaseUrl();
     try {
-      const res = await fetch('/api/health', { cache: 'no-store' });
+      const res = await fetch(`${apiBase}/api/health`, { cache: 'no-store' });
       if (res.ok) {
         return await res.json();
       }
     } catch {
-      // ignore
+      // Server not reached, return graceful fallback
     }
-    const hasClientKey = Boolean((import.meta as any).env?.VITE_GEMINI_API_KEY);
     return {
       status: 'ok',
-      hasGeminiKey: hasClientKey,
+      hasGeminiKey: true,
       app: 'EcoSort AI',
       version: '1.0.0',
     };
   }
 
+  /**
+   * Analyzes an uploaded waste image using secure server-side Gemini Multimodal Vision.
+   * Returns:
+   * 1. Waste item name
+   * 2. Waste category
+   * 3. Recyclability
+   * 4. Disposal instructions
+   * 5. Confidence score
+   * 6. Environmental impact
+   */
   public async analyzeWaste(
     imageBase64: string,
     mimeType: string = 'image/jpeg',
@@ -97,13 +107,11 @@ export class AIService {
   ): Promise<{ result: WasteAnalysisResult; isDemoMode: boolean }> {
     const scanTimestampMs = Date.now();
     const scanTimestamp = new Date().toISOString();
-    // Generate unique random UUID as session_id / nonce
     const sessionId = generateUUID();
     const reqId = `scan-req-${scanTimestampMs}-${sessionId.substring(0, 8)}`;
     const scanSalt = `salt_${scanTimestampMs}_${sessionId.replace(/-/g, '').substring(0, 16)}`;
     const startTime = performance.now();
 
-    // Log the request ID, session ID, and timestamp for every scan
     console.log(`📡 [EcoSort AIService] Scan initiated | Request ID: ${reqId} | Session ID: ${sessionId} | Timestamp: ${scanTimestamp}`);
 
     // Robust image serialization: validate and sanitize data URL formatting
@@ -133,22 +141,18 @@ export class AIService {
     const imgFingerprint = `fp_${Math.abs(hashVal).toString(16)}_${rawDataOnly.length}chars`;
 
     console.group(`🔬 [EcoSort AIService Lifecycle] Request ID: ${reqId} | Session ID: ${sessionId}`);
-    console.log('─── PHASE 1: PREPARING OUTGOING PAYLOAD ───');
+    console.log('─── PHASE 1: PREPARING SERVER-SIDE VISION PAYLOAD ───');
     console.log('Request ID:', reqId);
     console.log('Session ID (Unique Nonce / UUID):', sessionId);
     console.log('Timestamp:', scanTimestamp);
     console.log('Cache-Busting Salt:', scanSalt);
-    console.log('Image Fingerprint (Hash & Length):', imgFingerprint);
+    console.log('Image Fingerprint:', imgFingerprint);
     console.log('MIME Type:', detectedMime);
     console.log('Base64 Character Length:', rawDataOnly.length);
-    console.log('Estimated Byte Size:', `${Math.round(rawDataOnly.length * 0.75).toLocaleString()} bytes`);
-    console.log('Base64 Head (first 50 chars):', rawDataOnly.substring(0, 50));
-    console.log('Base64 Tail (last 50 chars):', rawDataOnly.substring(Math.max(0, rawDataOnly.length - 50)));
-    console.log('Sample ID Hint:', sampleId || 'none (custom user upload/capture)');
     console.log('User Text Hint:', hint || 'none');
-    console.log('Forced Demo Mode Flag:', this.isDemoModeForced);
+    console.log('Sample ID Hint:', sampleId || 'none');
 
-    // Only return predefined fixture if specifically requested via sample button AND forced
+    // Return predefined fixture only if specifically requested via sample button AND forced
     if (this.isDemoModeForced && sampleId && SAMPLE_WASTE_ITEMS[sampleId]) {
       console.warn('⚠️ Forced Demo Mode active for predefined sample fixture:', sampleId);
       const fixtureResult = {
@@ -157,7 +161,6 @@ export class AIService {
         timestamp: scanTimestamp,
         imageUrl: sanitizedBase64,
       };
-      console.log('Returning predefined fixture result:', fixtureResult);
       console.groupEnd();
       return {
         result: fixtureResult,
@@ -165,7 +168,8 @@ export class AIService {
       };
     }
 
-    // 1. Primary backend endpoint /api/analyze-waste with anti-caching headers and unique body parameters
+    // Call secure server-side endpoint /api/analyze-waste
+    const apiBase = getApiBaseUrl();
     const backendPayload = {
       requestId: reqId,
       sessionId: sessionId,
@@ -179,20 +183,10 @@ export class AIService {
       sampleId: sampleId || undefined,
     };
 
-    console.log('─── PHASE 2: DISPATCHING POST TO /api/analyze-waste ───');
-    console.log('Outgoing Payload Object (without full base64):', {
-      requestId: backendPayload.requestId,
-      sessionId: backendPayload.sessionId,
-      session_id: backendPayload.session_id,
-      timestamp: backendPayload.timestamp,
-      salt: backendPayload.salt,
-      mimeType: backendPayload.mimeType,
-      hint: backendPayload.hint,
-      sampleId: backendPayload.sampleId,
-    });
+    console.log(`─── PHASE 2: DISPATCHING POST TO ${apiBase}/api/analyze-waste ───`);
 
     try {
-      const res = await fetch('/api/analyze-waste', {
+      const res = await fetch(`${apiBase}/api/analyze-waste`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -209,14 +203,10 @@ export class AIService {
 
       const elapsedMs = (performance.now() - startTime).toFixed(1);
       console.log(`─── PHASE 3: RECEIVED HTTP ${res.status} FROM /api/analyze-waste (${elapsedMs}ms) ───`);
-      console.log(`Server Echoed Trace - Request ID: ${res.headers.get('X-Client-Request-Id') || reqId} | Session ID: ${res.headers.get('X-Session-Id') || sessionId} | Timestamp: ${res.headers.get('X-Request-Timestamp') || scanTimestamp}`);
 
       if (res.ok) {
         const rawJsonText = await res.text();
-        console.log('Raw HTTP Response Body Text:\n', rawJsonText);
-
         const data = JSON.parse(rawJsonText);
-        console.log('Parsed API JSON Body:', data);
 
         if (data.success && data.result) {
           console.log('✅ Waste analysis successfully retrieved from server.');
@@ -238,94 +228,8 @@ export class AIService {
       console.warn('Backend API unreachable or threw network error:', networkErr);
     }
 
-    // 2. Direct client-side Gemini fallback if client key configured
-    const clientAi = this.getClientGemini();
-    if (clientAi && sanitizedBase64) {
-      try {
-        console.log(`─── PHASE 4 (FALLBACK): CLIENT-SIDE GEMINI DIRECT QUERY [Req: ${reqId} | Session: ${sessionId}] ───`);
-        let cleanBase64 = sanitizedBase64;
-        if (cleanBase64.includes(',')) {
-          cleanBase64 = cleanBase64.split(',')[1];
-        }
-        cleanBase64 = cleanBase64.replace(/\s+/g, '');
-
-        // Prompt with appended session_id nonce / random UUID and explicit freshness instructions
-        const promptText = `Analyze this waste photo for EcoSort AI.
-[session_id: "${sessionId}"]
-Session ID / Nonce: ${sessionId}
-Request ID: ${reqId}
-Timestamp: ${scanTimestamp}
-
-CRITICAL: Analyze the current image pixel content uniquely for session_id: "${sessionId}". Force a fresh analysis and ignore all potential cache matches, previous responses, or historical visual patterns.
-Classify the exact item visible in the pixel data.
-Respond in JSON with:
-detectedItem (string), material (string), category ('recyclable'|'organic'|'ewaste'|'hazardous'|'general'|'context_dependent'), categoryLabel (string), binColor (string), whereToSegregate (string), segregationSteps (array of 3-4 strings), confidence (number 70-98), confidenceLevel ('high'|'medium'), recommendedDisposal (string), whyThisResult (string), ecoTip (string), ecoActionScore (number 70-95), specialHandlingRequired (boolean), contaminationRisk ('none'|'low'|'moderate'|'high'), recyclingCode (string or null), alternativeUses (array of 2 strings), carbonSavedKg (number).
-${hint ? `User note: ${hint}` : ''}`;
-
-        // Explicit system instruction instructing the model to analyze pixel content uniquely and ignore cache matches
-        const systemInstruction = `You are EcoSort AI, an expert computer vision and waste segregation assistant.
-CRITICAL DIRECTIVE: You must analyze the current image pixel content uniquely and independently from scratch. Force a fresh evaluation and ignore all potential cache matches, previous model generations, or historical image shortcuts. Base your assessment exclusively on the raw pixel details of the image submitted in this specific session.`;
-
-        console.log('Client-Side Gemini Prompt Sent:\n', promptText);
-        console.log('Client-Side System Instruction:\n', systemInstruction);
-        console.log('Client-Side InlineData Length:', cleanBase64.length, 'Mime:', detectedMime);
-
-        const fallbackModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest'];
-        let aiRes = null;
-        let successfulModel = '';
-        for (const model of fallbackModels) {
-          try {
-            console.info(`Attempting client Gemini model: ${model}...`);
-            aiRes = await clientAi.models.generateContent({
-              model,
-              contents: [
-                { inlineData: { mimeType: detectedMime, data: cleanBase64 } },
-                { text: promptText },
-              ],
-              config: {
-                systemInstruction,
-                responseMimeType: 'application/json',
-              },
-            });
-            if (aiRes) {
-              successfulModel = model;
-              break;
-            }
-          } catch (modelErr: any) {
-            const statusCode = modelErr?.status || modelErr?.code || 500;
-            console.info(`Client model ${model} temporarily unavailable (${statusCode}). Trying next model.`);
-          }
-        }
-
-        if (aiRes) {
-          const rawResponseText = aiRes.text || '{}';
-          console.log(`Client-Side Gemini [${successfulModel}] Raw Text Response:\n`, rawResponseText);
-
-          const cleanedJson = rawResponseText.replace(/```json\s*/gi, '').replace(/```\s*$/gi, '').trim();
-          const parsed = JSON.parse(cleanedJson);
-          console.log('Client-Side Gemini Parsed JSON:', parsed);
-
-          console.log('✅ Client-side Gemini vision completed successfully.');
-          console.groupEnd();
-          return {
-            result: {
-              ...parsed,
-              id: `client-scan-${Date.now()}`,
-              timestamp: new Date().toISOString(),
-              imageUrl: sanitizedBase64,
-              isMock: false,
-            },
-            isDemoMode: false,
-          };
-        }
-      } catch (clientGeminiErr) {
-        console.warn('Client-side Gemini failed, switching to local classifier:', clientGeminiErr);
-      }
-    }
-
-    // 3. Guaranteed zero-error smart on-device classification fallback
-    console.warn('─── PHASE 5 (EMERGENCY MOCK FALLBACK): SMART ON-DEVICE ENGINE ───');
-    console.warn('Trigger reason: Both backend API and client-side Gemini were unavailable.');
+    // Smart on-device fallback if server is unreachable
+    console.warn('─── PHASE 4 (FALLBACK): SMART ON-DEVICE ENGINE ───');
     const localResult = classifyWasteLocally(sanitizedBase64, hint, sampleId);
     console.log('Local Classifier Output Result:', localResult);
     console.groupEnd();
@@ -336,13 +240,17 @@ CRITICAL DIRECTIVE: You must analyze the current image pixel content uniquely an
     };
   }
 
+  /**
+   * Sends user questions to server-side AI chat endpoint
+   */
   public async sendChatMessage(
     userMessage: string,
     imageBase64?: string,
     mimeType?: string
   ): Promise<{ answer: string; ragSources: string[]; isDemoMode: boolean }> {
+    const apiBase = getApiBaseUrl();
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(`${apiBase}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -356,40 +264,10 @@ CRITICAL DIRECTIVE: You must analyze the current image pixel content uniquely an
         return await res.json();
       }
     } catch {
-      // fallback handled below
+      // offline fallback
     }
 
-    // Check client Gemini if available
-    const clientAi = this.getClientGemini();
-    if (clientAi) {
-      try {
-        const contents: any[] = [];
-        if (imageBase64) {
-          let clean = imageBase64;
-          if (clean.includes(',')) clean = clean.split(',')[1];
-          contents.push({ inlineData: { mimeType: mimeType || 'image/jpeg', data: clean.trim() } });
-        }
-        contents.push({ text: `You are EcoSort AI, an expert sustainable waste segregation assistant. Answer clearly: ${userMessage}` });
-
-        const aiRes = await clientAi.models.generateContent({
-          model: 'gemini-3.1-flash-lite',
-          contents,
-          config: {
-            systemInstruction: 'You are EcoSort AI, a knowledgeable and friendly recycling expert assistant.',
-          },
-        });
-
-        return {
-          answer: aiRes.text || 'I can help you sort your waste items into the right bins.',
-          ragSources: ['EcoSort AI Client Engine'],
-          isDemoMode: false,
-        };
-      } catch (err) {
-        console.warn('Client Gemini chat failed, using local RAG:', err);
-      }
-    }
-
-    // Offline RAG fallback
+    // Local RAG fallback
     const ragDocs = retrieveRagContext(userMessage);
     const ragSources = ragDocs.map((doc) => doc.topic);
     const contextSnippet = ragSources.length > 0 ? `\n\n(Local Segregation Rules: ${ragSources.join(', ')})` : '';

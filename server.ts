@@ -2,7 +2,6 @@ import express, { Request, Response } from "express";
 import path from "path";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
-import { createServer as createViteServer } from "vite";
 import { WASTE_KNOWLEDGE_BASE, retrieveRagContext } from "./src/services/wasteKnowledgeBase.js";
 import { SAMPLE_WASTE_ITEMS } from "./src/services/sampleData.js";
 
@@ -11,18 +10,44 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Middleware for parsing JSON with generous payload limit for base64 images
-app.use(express.json({ limit: "25mb" }));
-app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+// CORS headers for resilient API access across environments (Local, Cloud Run, Vercel)
+app.use((_req: Request, res: Response, next: express.NextFunction) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-Request-Id, X-Session-Id, X-Request-Timestamp, X-Request-Salt");
+  if (_req.method === "OPTIONS") {
+    res.status(200).end();
+    return;
+  }
+  next();
+});
 
-// Lazy initialization of Gemini Client
+// Resilient body parsing: Vercel serverless functions pre-parse req.body for JSON.
+// Checking if req.body is already populated prevents the known stream hang in Vercel.
+app.use((req: Request, res: Response, next: express.NextFunction) => {
+  if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
+    return next();
+  }
+  return express.json({ limit: "25mb" })(req, res, next);
+});
+app.use((req: Request, res: Response, next: express.NextFunction) => {
+  if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
+    return next();
+  }
+  return express.urlencoded({ extended: true, limit: "25mb" })(req, res, next);
+});
+
+// Lazy initialization of Gemini Client using server-side GEMINI_API_KEY secret
 let geminiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY;
+
   if (apiKey && apiKey !== "MY_GEMINI_API_KEY" && apiKey.trim() !== "") {
     if (!geminiClient) {
       geminiClient = new GoogleGenAI({
-        apiKey: apiKey,
+        apiKey: apiKey.trim(),
         httpOptions: {
           headers: {
             "User-Agent": "aistudio-build",
@@ -132,8 +157,8 @@ async function generateWithModelFallback(
   throw lastError;
 }
 
-// Health check endpoint
-app.get("/api/health", (_req: Request, res: Response) => {
+// Health check endpoint (supports both /api/health and /health)
+app.get(["/api/health", "/health"], (_req: Request, res: Response) => {
   const hasKey = Boolean(
     (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") ||
     (process.env.GOOGLE_API_KEY && process.env.GOOGLE_API_KEY !== "MY_GEMINI_API_KEY")
@@ -143,6 +168,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
     hasGeminiKey: hasKey,
     app: "EcoSort AI",
     version: "1.0.0",
+    platform: process.env.VERCEL ? "vercel-serverless" : "container",
   });
 });
 
@@ -167,6 +193,8 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       material: "Untreated Wood / Plant Biomass (Cellulose)",
       category: "organic",
       categoryLabel: "Organic / Bulky Wood",
+      recyclability: "100% Biodegradable & Compostable (Untreated raw wood only)",
+      disposalInstructions: "Untreated clean timber can be composted, chipped into garden mulch, or repurposed. Painted or treated timber must go to municipal bulky waste collection.",
       binColor: "Green Bin (Compost) or Bulky Timber Drop-Off",
       whereToSegregate: "Green Bin (if small chips) or municipal bulky wood drop-off point.",
       segregationSteps: [
@@ -176,6 +204,7 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       ],
       confidence: 90,
       confidenceLevel: "high",
+      environmentalImpact: "Composting or mulching natural wood sequesters carbon, enriches soil microbial life, and saves approx. 0.35 kg CO2e.",
       recommendedDisposal: "If clean and untreated, chip into garden mulch, use in home composting, or take to municipal wood recycling. If painted or chemically treated, dispose in municipal bulky/general waste.",
       whyThisResult: "Natural solid wood is biodegradable cellulose biomass. Untreated wood breaks down naturally or can be re-milled.",
       ecoTip: "Repurpose wood scraps for garden stakes, DIY shelving, or birdhouses before discarding.",
@@ -195,6 +224,8 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       material: "Soda-Lime Silica Glass (Infinitely Recyclable)",
       category: "recyclable",
       categoryLabel: "Dry Recyclables / Glass",
+      recyclability: "Infinitely Recyclable (100% Closed-Loop Recyclability)",
+      disposalInstructions: "Rinse thoroughly with water, remove metal lids/corks for separate recycling, and place into curbside glass recycling or municipal bottle bank.",
       binColor: "Blue Bin or Dedicated Glass Drop-Off Kiosk",
       whereToSegregate: "Deposit in curbside glass recycling or municipal bottle bank.",
       segregationSteps: [
@@ -205,6 +236,7 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       ],
       confidence: 95,
       confidenceLevel: "high",
+      environmentalImpact: "Recycling glass reduces furnace melting temperatures, cutting energy use and CO2 emissions while preventing landfill buildup, saving 0.30 kg CO2e.",
       recommendedDisposal: "Rinse and place into glass recycling. Glass can be recycled infinitely without quality degradation.",
       whyThisResult: "Glass containers melt cleanly into cullet for new jars and bottles with substantial energy savings.",
       ecoTip: "Reuse sturdy glass jars for kitchen pantry storage or propagating plant cuttings.",
@@ -253,6 +285,8 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       material: "Polyethylene / Polypropylene (#2 HDPE or #5 PP)",
       category: "recyclable",
       categoryLabel: "Dry Recyclables / Plastics",
+      recyclability: "Highly Recyclable (Widely accepted in municipal curbside bins)",
+      disposalInstructions: "Empty any contents, rinse clean with cold water, replace cap, and place into your Blue Bin.",
       binColor: "Blue Bin (Dry Recyclables)",
       whereToSegregate: "Blue Bin (Dry Recyclables) after emptying and rinsing.",
       segregationSteps: [
@@ -262,6 +296,7 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
         "4. Place into the Blue Bin (Dry Recyclables)."
       ],
       confidence: 88,
+      environmentalImpact: "Mechanical recycling of rigid plastics avoids petroleum extraction and reduces embodied carbon by approx. 0.18 kg CO2e per item.",
       recommendedDisposal: "Clean curbside recycling. Rigid HDPE and PP plastics are in high demand for remanufacturing.",
       whyThisResult: "Visual characteristics indicate a single-polymer rigid container suitable for standard mechanical recycling.",
       ecoTip: "Look for bulk refills to minimize purchase of single-use rigid containers.",
@@ -274,6 +309,8 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       material: "Cellulose Paperboard (Kraft Pulp Fibers)",
       category: "recyclable",
       categoryLabel: "Dry Recyclables / Paper",
+      recyclability: "Highly Recyclable (Can be repulped up to 7 times)",
+      disposalInstructions: "Remove plastic packing materials, flatten the cardboard box to save space, and place into the paper/recyclables bin.",
       binColor: "Blue Bin (Dry Paper & Cardboard)",
       whereToSegregate: "Flatten and place into the Blue Bin (Dry Recyclables).",
       segregationSteps: [
@@ -283,6 +320,7 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
         "4. Keep sheltered from rain before municipal collection."
       ],
       confidence: 91,
+      environmentalImpact: "Recycling paperboard saves mature trees, uses 65% less energy than virgin pulp production, and avoids 0.28 kg CO2e.",
       recommendedDisposal: "Curbside paper/cardboard recycling. Keep dry to preserve paper pulp fiber strength.",
       whyThisResult: "Dry paperboard is pulped and reformed into new cardboard up to 5 to 7 times.",
       ecoTip: "Cardboard can be shredded as excellent brown carbon bedding for compost or weed suppression in gardens.",
@@ -295,6 +333,8 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       material: "Aluminum Alloy (Highly Recyclable)",
       category: "recyclable",
       categoryLabel: "Dry Recyclables / Metals",
+      recyclability: "100% Infinitely Recyclable (Zero quality degradation)",
+      disposalInstructions: "Empty liquids completely, rinse lightly, keep tab attached, and place in curbside metal recycling or bottle redemption kiosk.",
       binColor: "Blue Bin (Metals & Recyclables)",
       whereToSegregate: "Blue Bin (Dry Recyclables) or container deposit redemption center.",
       segregationSteps: [
@@ -304,6 +344,7 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
         "4. Deposit into Blue Bin or bottle redemption kiosk."
       ],
       confidence: 92,
+      environmentalImpact: "Recycling aluminum requires 95% less energy than extracting bauxite ore, directly avoiding 0.32 kg CO2e.",
       recommendedDisposal: "Deposit in curbside metal recycling or bottle refund kiosks. Recycled aluminum saves 95% of virgin smelting energy.",
       whyThisResult: "Aluminum can be remelted back into new cans in as little as 60 days in a closed-loop cycle.",
       ecoTip: "Participate in local container deposit programs where available to earn back recycling refunds.",
@@ -316,6 +357,8 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
       material: "Mixed Composite / Flexible Foil or Laminated Plastic",
       category: "context_dependent",
       categoryLabel: "Context-Dependent / Cleanliness Inspection",
+      recyclability: "Context-Dependent (Non-recyclable if composite foil; recyclable if single-layer clean plastic)",
+      disposalInstructions: "Inspect package markings. If it has a metalized film layer or food contamination, discard in General Waste (Black Bin). If clean film, look for grocery store drop-offs.",
       binColor: "Blue Bin (if clean & single polymer) OR Black Bin (if composite/soiled)",
       whereToSegregate: "Inspect resin code: Place clean single-type plastics in Blue Bin; place multi-layer foil pouches in Black Bin.",
       segregationSteps: [
@@ -324,6 +367,7 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
         "3. If clean paper or single-material plastic, place in Blue Bin (Recyclables)."
       ],
       confidence: 82,
+      environmentalImpact: "Correct diversion avoids contaminating municipal recycling batches, protecting circular processing streams.",
       recommendedDisposal: "Inspect material identification codes. Complex composite packaging that cannot be separated goes to general waste.",
       whyThisResult: "Composite multi-material items (foil fused to plastic) cannot be separated easily by municipal recycling sorters.",
       ecoTip: "Choose products packaged in 100% paper or mono-material plastic that local facilities can process.",
@@ -341,11 +385,14 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
     material: selected.material,
     category: selected.category as any,
     categoryLabel: selected.categoryLabel,
+    recyclability: selected.recyclability,
+    disposalInstructions: selected.disposalInstructions,
     binColor: selected.binColor,
     whereToSegregate: selected.whereToSegregate,
     segregationSteps: selected.segregationSteps,
     confidence: selected.confidence,
     confidenceLevel: "high",
+    environmentalImpact: selected.environmentalImpact,
     recommendedDisposal: selected.recommendedDisposal,
     whyThisResult: selected.whyThisResult,
     ecoTip: selected.ecoTip,
@@ -359,8 +406,8 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
   };
 }
 
-// API: Analyze Waste Image (Multimodal Vision)
-app.post("/api/analyze-waste", async (req: Request, res: Response): Promise<void> => {
+// API: Analyze Waste Image (Multimodal Vision) - supports both /api/analyze-waste and /analyze-waste
+app.post(["/api/analyze-waste", "/analyze-waste"], async (req: Request, res: Response): Promise<void> => {
   const serverTime = new Date().toISOString();
   const clientSessionId = (req.headers["x-session-id"] as string) || req.body?.sessionId || req.body?.session_id || `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   const clientReqId = (req.headers["x-client-request-id"] as string) || req.body?.requestId || `scan-req-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -458,54 +505,64 @@ Request ID: ${clientReqId}
 Timestamp: ${clientTimestamp}
 Salt: ${clientSalt}
 
-CRITICAL WASTE IDENTIFICATION DIRECTIVES:
-1. PRIMARY OBJECT IDENTIFICATION:
-   - Identify the primary disposable item, product packaging, food remnant, container, electronic item, or material visible in the photograph.
-   - Even if the photo is taken on a table, desk, counter, floor, outdoors, or held in a person's hand, focus specifically on the disposable/waste object itself (do NOT classify the table, room, or hand as the detectedItem).
-   - If the item is empty, crumpled, opened, or partially consumed, identify what the original item was and its physical material.
-   - If multiple waste items are visible, identify the most prominent item in the foreground and mention other components (like cap or lid) in segregationSteps.
+CRITICAL WASTE IDENTIFICATION DIRECTIVES (You MUST output all 6 key metrics):
+1. WASTE ITEM NAME (detectedItem):
+   - Identify the primary disposable item, product packaging, food remnant, container, electronic item, or material visible in the photograph (e.g. "PET Plastic Water Bottle", "Organic Banana Peel", "Corrugated Cardboard Box", "Lithium-Ion AA Battery", "Aluminum Soda Can", "Multi-Layer Snack Chip Bag", "Glass Beverage Bottle", "Styrofoam Food Container", "Electronic Charging Cable", "Coffee Grounds & Filter").
+   - Even if the photo is taken on a table, desk, counter, floor, or held in a person's hand, focus specifically on the disposable/waste object itself (do NOT classify the table, room, or hand as the detectedItem).
+   - material: Physical composition (e.g. "Polyethylene Terephthalate (#1 PET)", "Organic Plant Biomass", "Cellulose Paperboard", "Aluminum Alloy").
 
-2. DETERMINE EXACTLY WHAT KIND OF WASTE THIS IS:
-   - detectedItem: Give the clear, specific product/waste name (e.g. "PET Plastic Water Bottle", "Organic Banana Peel", "Corrugated Cardboard Box", "Lithium-Ion AA Battery", "Aluminum Soda Can", "Multi-Layer Snack Chip Bag", "Glass Beverage Bottle", "Styrofoam Food Container", "Electronic Charging Cable", "Coffee Grounds & Filter").
-   - material: Give the exact physical composition (e.g. "Polyethylene Terephthalate (#1 PET)", "Organic Plant Biomass", "Cellulose Paperboard", "Aluminum Alloy", "High-Density Polyethylene (#2 HDPE)", "Multi-Layer Plastic-Foil Composite", "Soda-Lime Glass", "Expanded Polystyrene Foam (#6 PS)").
+2. WASTE CATEGORY (category & categoryLabel):
    - category: MUST be exactly one of: 'recyclable', 'organic', 'ewaste', 'hazardous', 'general', 'context_dependent'.
      * 'recyclable': Clean rigid plastics (#1 PET, #2 HDPE, #5 PP), clean paper, cardboard, glass containers, aluminum/steel cans.
      * 'organic': Food remnants, peels, vegetable/fruit scraps, coffee grounds, garden clippings, 100% compostable items.
      * 'ewaste': Electronics, cables, chargers, headphones, circuit boards, small electrical appliances.
      * 'hazardous': Batteries, spray aerosol cans, paints, motor oil, toxic cleaners, fluorescent bulbs, medical sharps.
      * 'general': Non-recyclable packaging, multi-layer foil pouches, food-greased napkins, composite items, styrofoam, landfill trash.
-     * 'context_dependent': Items that require inspection (e.g. greasy pizza box: clean lid is recyclable, soiled base is compost or trash; dirty bottles that require rinsing).
-   - categoryLabel: Concise human stream title (e.g. 'Dry Recyclables / Plastics', 'Organic / Food & Compost', 'E-Waste / Electronics', 'Hazardous Collection', 'General Waste / Landfill').
+     * 'context_dependent': Items requiring inspection (e.g. greasy pizza box: clean lid is recyclable, soiled base is compost or trash).
+   - categoryLabel: Clear title (e.g. 'Dry Recyclables / Plastics', 'Organic / Food & Compost', 'E-Waste / Electronics', 'Hazardous Collection', 'General Waste / Landfill').
 
-3. ACCURATE DISPOSAL & SEGREGATION:
-   - binColor: Target disposal receptacle (e.g. 'Blue Bin (Dry Recyclables)', 'Green Bin (Organic / Compost)', 'Yellow Bin (E-Waste & Electronics)', 'Red Bin (Hazardous Collection)', 'Black Bin (General Trash)').
+3. RECYCLABILITY (recyclability):
+   - Direct, authoritative assessment of recyclability status and requirements (e.g. "Highly Recyclable (100% Reprocessable through curbside collection)", "100% Biodegradable & Compostable", "Specialized E-Waste Drop-Off Required", "Hazardous Material - Do NOT Curbside Recycle", "Non-Recyclable Landfill Residual").
+
+4. DISPOSAL INSTRUCTIONS (disposalInstructions, binColor, whereToSegregate, segregationSteps):
+   - disposalInstructions: Direct, clear instructions on preparation and where to dispose of the item safely.
+   - binColor: Target bin (e.g. 'Blue Bin (Dry Recyclables)', 'Green Bin (Organic / Compost)', 'Yellow Bin (E-Waste & Electronics)', 'Red Bin (Hazardous Collection)', 'Black Bin (General Trash)').
    - whereToSegregate: 1-2 direct sentences stating the target bin and disposal method.
-   - segregationSteps: Array of 3 to 4 sequential, actionable steps (e.g. ["1. Empty any residual liquid", "2. Rinse clean with water", "3. Keep lid attached", "4. Deposit into Blue Bin"]).
+   - segregationSteps: Array of 3 to 4 sequential, actionable steps (e.g. ["1. Empty any residual liquid", "2. Rinse clean with cold water", "3. Flatten bottle to save space", "4. Deposit into Blue Bin with cap attached"]).
 
-4. ACCURACY & CONFIDENCE:
-   - confidence: Integer 70-98 indicating visual recognition confidence.
+5. CONFIDENCE SCORE (confidence & confidenceLevel):
+   - confidence: Integer 70-98 representing visual classification confidence.
    - confidenceLevel: 'high' (>=85) or 'medium' (<85).
-   - recommendedDisposal: Summary disposal guidance.
-   - whyThisResult: Educational explanation of why this item belongs in this waste category.
-   - ecoTip: Practical reduction, reuse, or sorting tip.
+
+6. ENVIRONMENTAL IMPACT (environmentalImpact & carbonSavedKg):
+   - environmentalImpact: Clear, educational explanation of the environmental benefits, circular resource conservation, and landfill diversion benefits of properly segregating this item.
+   - carbonSavedKg: Estimated kg CO2e greenhouse emissions prevented through correct diversion (e.g. 0.25).
+
+ADDITIONAL ENRICHMENTS:
+   - whyThisResult: Scientific rationale for categorization.
+   - ecoTip: Practical reduction or reuse tip.
    - ecoActionScore: Integer 70-98.
    - specialHandlingRequired: Boolean (true if batteries, electronics, chemicals, sharps, medical).
    - specialHandlingNotes: Notes if special handling is needed, otherwise null.
    - contaminationRisk: 'none', 'low', 'moderate', or 'high'.
-   - recyclingCode: SPI code (e.g. '#1 PET', '#2 HDPE', '#5 PP', 'ALU 41', 'PAP 20', 'GL 70') or null.
+   - recyclingCode: SPI code (e.g. '#1 PET', '#2 HDPE', 'ALU 41', 'PAP 20') or null.
    - alternativeUses: Array of 2 creative upcycling or repurposing ideas.
-   - carbonSavedKg: Estimated number of kg CO2e saved through correct diversion (float e.g. 0.25).
 
 ${hint ? `User provided clarification / hint: "${hint}". Use this context to assist visual identification.` : ""}
 ${sampleId ? `Item reference: "${sampleId}".` : ""}
 
-Respond ONLY with valid JSON.`;
+Respond ONLY with valid JSON with keys:
+"detectedItem", "material", "category", "categoryLabel", "recyclability", "disposalInstructions", "binColor", "whereToSegregate", "segregationSteps", "confidence", "confidenceLevel", "environmentalImpact", "carbonSavedKg", "whyThisResult", "ecoTip", "ecoActionScore", "specialHandlingRequired", "specialHandlingNotes", "contaminationRisk", "recyclingCode", "alternativeUses"`;
 
     const systemInstruction = `You are EcoSort AI, a specialist multimodal waste classification and segregation vision model.
-Analyze the provided photograph carefully to determine:
-1. What kind of waste item is shown (item name, material composition, and disposal stream).
-2. Exactly how and where the user should segregate or recycle it.
-Focus on the primary disposable object in the photograph. Base your analysis on the actual pixel data of this submission.`;
+Analyze the provided photograph carefully to determine and return all 6 core metrics:
+1. Waste item name
+2. Waste category
+3. Recyclability
+4. Disposal instructions
+5. Confidence score
+6. Environmental impact
+Base your analysis on the actual pixel data of this submission.`;
 
     console.log("─── STEP 2: SPECIFIC PAYLOAD TRANSMITTED TO GEMINI API ───");
     console.log("Request Freshness Token:", {
@@ -596,17 +653,44 @@ Focus on the primary disposable object in the photograph. Base your analysis on 
         ];
 
     const uniqueId = `scan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    
+    // Default recyclability descriptor based on category if not directly output
+    const defaultRecyclability =
+      category === "recyclable"
+        ? "Highly Recyclable (Standard curbside collection)"
+        : category === "organic"
+        ? "100% Biodegradable & Compostable"
+        : category === "ewaste"
+        ? "Specialized E-Waste Drop-Off Required"
+        : category === "hazardous"
+        ? "Hazardous Chemical Disposal Required"
+        : "Non-Recyclable Residual Waste";
+
+    const defaultEnvironmentalImpact =
+      category === "recyclable"
+        ? `Recycling this item conserves virgin materials and prevents approx. ${parsed.carbonSavedKg || 0.25} kg of CO2e greenhouse gas emissions.`
+        : category === "organic"
+        ? `Composting organic waste prevents methane emissions in landfills and enriches soil, avoiding approx. ${parsed.carbonSavedKg || 0.2} kg CO2e.`
+        : category === "ewaste"
+        ? `Proper electronic recycling recovers rare metals and prevents toxic leaching, avoiding approx. ${parsed.carbonSavedKg || 0.45} kg CO2e.`
+        : category === "hazardous"
+        ? `Certified hazardous disposal protects soil and groundwater ecosystems from volatile heavy metals and toxic chemicals.`
+        : `Responsible landfill disposal prevents loose environmental litter and protects municipal stormwater systems.`;
+
     const result = {
       detectedItem: parsed.detectedItem || "Identified Waste Item",
       material: parsed.material || "Recoverable Material",
       category: category,
       categoryLabel: parsed.categoryLabel || `${category.charAt(0).toUpperCase() + category.slice(1)} Stream`,
+      recyclability: parsed.recyclability || defaultRecyclability,
+      disposalInstructions: parsed.disposalInstructions || whereToSegregate,
       binColor: binColor,
       whereToSegregate: whereToSegregate,
       segregationSteps: segregationSteps,
       confidence: typeof parsed.confidence === "number" ? parsed.confidence : 90,
       confidenceLevel: parsed.confidenceLevel || (parsed.confidence >= 85 ? "high" : "medium"),
-      recommendedDisposal: parsed.recommendedDisposal || whereToSegregate,
+      environmentalImpact: parsed.environmentalImpact || defaultEnvironmentalImpact,
+      recommendedDisposal: parsed.recommendedDisposal || parsed.disposalInstructions || whereToSegregate,
       whyThisResult: parsed.whyThisResult || "Categorized based on physical material composition and circular recovery feasibility.",
       ecoTip: parsed.ecoTip || "Diverting this item from landfills reduces greenhouse gas emissions and conserves virgin resources.",
       ecoActionScore: typeof parsed.ecoActionScore === "number" ? parsed.ecoActionScore : 88,
@@ -664,8 +748,8 @@ Focus on the primary disposable object in the photograph. Base your analysis on 
   }
 });
 
-// API: AI Chat with RAG Knowledge Base
-app.post("/api/chat", async (req: Request, res: Response): Promise<void> => {
+// API: AI Chat with RAG Knowledge Base - supports both /api/chat and /chat
+app.post(["/api/chat", "/chat"], async (req: Request, res: Response): Promise<void> => {
   try {
     const { messages, userMessage, imageBase64, mimeType = "image/jpeg" } = req.body;
     const ai = getGeminiClient();
@@ -787,6 +871,8 @@ ${ragContextText || "General municipal waste sorting principles apply."}`;
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    // Dynamic import to prevent vite from being bundled into serverless production functions
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -805,4 +891,11 @@ async function startServer() {
   });
 }
 
-startServer();
+// Export the Express app for Vercel Serverless Function handlers
+export { app };
+export default app;
+
+// Only start standalone HTTP server if running as main process (not in Vercel serverless functions)
+if (process.env.VERCEL !== "1" && !process.env.NOW_REGION) {
+  startServer();
+}

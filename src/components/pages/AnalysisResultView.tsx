@@ -25,7 +25,8 @@ import {
   Trash2,
   Layers,
   HelpCircle,
-  RefreshCw
+  RefreshCw,
+  Globe
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -331,17 +332,24 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
             </div>
 
             {/* Kind of Waste Matrix */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 space-y-0.5">
                 <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Material Composition</span>
                 <p className="text-xs sm:text-sm font-bold text-slate-900">{result.material}</p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 space-y-0.5">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Waste Category Stream</span>
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Waste Category</span>
                 <p className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
                   <span className="text-sm">{binTheme.icon}</span>
                   <span>{result.categoryLabel}</span>
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200/80 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-800">Recyclability</span>
+                <p className="text-xs sm:text-sm font-bold text-emerald-950">
+                  {result.recyclability || (result.category === 'recyclable' ? 'Highly Recyclable' : result.category === 'organic' ? '100% Compostable' : 'Special / Residual')}
                 </p>
               </div>
             </div>
@@ -510,10 +518,10 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
         <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-sm space-y-2">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Direct Segregation Advice</span>
+            <span>Disposal Instructions</span>
           </div>
           <p className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
-            “{result.whereToSegregate || result.recommendedDisposal}”
+            “{result.disposalInstructions || result.whereToSegregate || result.recommendedDisposal}”
           </p>
         </div>
 
@@ -585,6 +593,22 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
             <p className="text-slate-600 text-sm leading-relaxed">
               {result.whyThisResult}
             </p>
+
+            {/* Environmental Impact Box */}
+            <div className="mt-3 p-3.5 rounded-2xl bg-teal-50/70 border border-teal-200/80 space-y-1">
+              <div className="flex items-center gap-1.5 text-teal-900 font-bold text-xs uppercase tracking-wider">
+                <Globe className="w-3.5 h-3.5 text-teal-700" />
+                <span>Environmental Impact</span>
+              </div>
+              <p className="text-xs text-teal-950 leading-relaxed font-medium">
+                {result.environmentalImpact || `Proper diversion avoids approx. ${result.carbonSavedKg || 0.25} kg CO₂e greenhouse emissions and saves landfill space.`}
+              </p>
+              {typeof result.carbonSavedKg === 'number' && result.carbonSavedKg > 0 && (
+                <div className="text-[11px] font-bold text-teal-800 pt-0.5">
+                  🌱 Estimated CO₂e Diverted: ~{result.carbonSavedKg} kg
+                </div>
+              )}
+            </div>
           </div>
 
           {result.alternativeUses && result.alternativeUses.length > 0 && (
