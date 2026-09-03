@@ -2,17 +2,30 @@
 
 @layer base {
   :root {
-    --brand-forest: #0B3B24;
+    --brand-forest: #064E3B;
     --brand-emerald: #10B981;
-    --brand-leaf: #15803D;
+    --brand-emerald-dark: #047857;
+    --brand-leaf: #059669;
     --brand-mint: #ECFDF5;
     --brand-cream: #F8FAF8;
   }
 
   body {
     background-color: #F8FAF8;
-    color: #1E293B;
+    color: #0F172A;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+}
+
+/* Custom subtle background patterns */
+.bg-grid-pattern {
+  background-image: radial-gradient(rgba(16, 185, 129, 0.12) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.bg-dot-pattern {
+  background-image: radial-gradient(#CBD5E1 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
 /* Custom scrollbar */
@@ -33,16 +46,17 @@
 
 /* Glassmorphism helpers */
 .glass-card {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(226, 232, 240, 0.8);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(226, 232, 240, 0.85);
 }
 
 .glass-card-dark {
-  background: rgba(15, 35, 24, 0.92);
+  background: rgba(6, 44, 27, 0.94);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(34, 197, 94, 0.2);
+  border: 1px solid rgba(16, 185, 129, 0.25);
 }
+
 

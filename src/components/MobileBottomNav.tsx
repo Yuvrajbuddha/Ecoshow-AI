@@ -159,7 +159,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             <button
               id="mobile-nav-scan-cta"
               onClick={() => setActiveTab('scan')}
-              className="w-14 h-14 rounded-full bg-gradient-to-tr from-emerald-700 to-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-700/35 active:scale-95 transition-transform border-4 border-white"
+              className="w-14 h-14 rounded-full bg-gradient-to-tr from-[#0F392B] via-[#059669] to-[#10B981] text-white flex items-center justify-center shadow-lg shadow-emerald-900/30 active:scale-95 transition-transform border-4 border-white"
               aria-label="Scan Waste"
             >
               <Camera className="w-6 h-6" />

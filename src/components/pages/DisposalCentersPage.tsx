@@ -23,6 +23,7 @@ export const DisposalCentersPage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedCenter, setSelectedCenter] = useState<DisposalCenter | null>(null);
   const [directionsModalOpen, setDirectionsModalOpen] = useState(false);
+  const [navCopiedNotice, setNavCopiedNotice] = useState<string | null>(null);
 
   const categories = [
     { id: 'all', label: 'All Centers' },
@@ -297,8 +298,11 @@ export const DisposalCentersPage: React.FC = () => {
               </div>
 
               {/* Turn-by-turn route preview */}
-              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
-                <div className="font-bold text-slate-900">Estimated Route: 6 mins (2.1 km)</div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+                <div className="font-bold text-slate-900 flex items-center justify-between">
+                  <span>Estimated Route: 6 mins</span>
+                  <span className="text-emerald-700 font-mono">2.1 km away</span>
+                </div>
                 <ol className="list-decimal list-inside text-slate-600 space-y-1">
                   <li>Head north toward Circular Economy Blvd</li>
                   <li>Turn right onto GreenTech Way (1.2 km)</li>
@@ -306,16 +310,37 @@ export const DisposalCentersPage: React.FC = () => {
                 </ol>
               </div>
 
-              <button
-                onClick={() => {
-                  alert(`Navigating to ${selectedCenter.name}... Ready for Google Maps redirection!`);
-                  setDirectionsModalOpen(false);
-                }}
-                className="w-full py-3 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
-              >
-                <Navigation className="w-4 h-4" />
-                <span>Launch GPS Navigation</span>
-              </button>
+              {navCopiedNotice && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-medium flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{navCopiedNotice}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const addressQuery = encodeURIComponent(`${selectedCenter.name}, ${selectedCenter.address}`);
+                    setNavCopiedNotice(`Address copied for Google Maps routing!`);
+                    setTimeout(() => {
+                      setDirectionsModalOpen(false);
+                      setNavCopiedNotice(null);
+                    }, 1400);
+                  }}
+                  className="flex-1 py-3 rounded-2xl bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-sm shadow-xs transition-all flex items-center justify-center gap-2 active:scale-95"
+                >
+                  <Navigation className="w-4 h-4" />
+                  <span>Copy Map Route</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDirectionsModalOpen(false)}
+                  className="px-4 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm transition-all"
+                >
+                  Close
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

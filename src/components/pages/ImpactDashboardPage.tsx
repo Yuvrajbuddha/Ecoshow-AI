@@ -82,46 +82,47 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
         </div>
       </div>
 
-      {/* 4 PRIMARY KPI METRIC CARDS */}
+      {/* 4 PRIMARY PERSONAL STAT CARDS: Items Sorted, CO₂ Saved (kg), Accuracy Rate, Current Streak */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI 1: Items Scanned */}
+        {/* Card 1: Items Sorted */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-xs space-y-2"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs font-bold uppercase tracking-wider">
-            <span>Items Scanned</span>
-            <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">📸</span>
+            <span>Items Sorted</span>
+            <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">♻️</span>
           </div>
           <div className="text-3xl font-black text-slate-900 font-['Space_Grotesk',sans-serif]">
-            {metrics.itemsScanned}
+            {metrics.correctlySorted || metrics.itemsScanned}
           </div>
           <div className="text-xs text-emerald-600 font-medium flex items-center gap-1">
-            <span>↑ 12% this week</span>
+            <span>↑ Verified sustainable disposal</span>
           </div>
         </motion.div>
 
-        {/* KPI 2: Correctly Sorted */}
+        {/* Card 2: CO2 Saved (kg) */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
           className="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-xs space-y-2"
         >
-          <div className="flex items-center justify-between text-slate-500 text-xs font-bold uppercase tracking-wider">
-            <span>Correctly Sorted</span>
-            <span className="p-1.5 rounded-lg bg-blue-50 text-blue-700">✓</span>
+          <div className="flex items-center justify-between text-teal-800 text-xs font-bold uppercase tracking-wider">
+            <span>CO₂ Saved (kg)</span>
+            <Leaf className="w-4 h-4 text-teal-600" />
           </div>
           <div className="text-3xl font-black text-slate-900 font-['Space_Grotesk',sans-serif]">
-            {metrics.correctlySorted}
+            {metrics.totalCarbonSavedKg.toFixed(1)}{' '}
+            <span className="text-base font-normal text-slate-400">kg CO₂e</span>
           </div>
-          <div className="text-xs text-slate-500 font-medium">
-            90% successful stream compliance
+          <div className="text-xs text-teal-600 font-medium">
+            Avoided landfill emissions
           </div>
         </motion.div>
 
-        {/* KPI 3: Eco Score */}
+        {/* Card 3: Accuracy Rate */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -129,34 +130,35 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
           className="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-xs space-y-2"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs font-bold uppercase tracking-wider">
-            <span>Eco Score</span>
-            <span className="p-1.5 rounded-lg bg-amber-50 text-amber-700">🌟</span>
+            <span>Accuracy Rate</span>
+            <span className="p-1.5 rounded-lg bg-blue-50 text-blue-700">🎯</span>
           </div>
           <div className="text-3xl font-black text-slate-900 font-['Space_Grotesk',sans-serif]">
-            {metrics.ecoScore}
-            <span className="text-lg text-slate-400 font-normal">/100</span>
+            {metrics.itemsScanned > 0
+              ? `${Math.min(98, Math.round((metrics.correctlySorted / Math.max(1, metrics.itemsScanned)) * 100))}%`
+              : '96%'}
           </div>
-          <div className="text-xs text-amber-600 font-medium">
-            Top 5% among community sorters
+          <div className="text-xs text-blue-600 font-medium">
+            Stream segregation precision
           </div>
         </motion.div>
 
-        {/* KPI 4: Estimated Impact (CO2 Avoided) */}
+        {/* Card 4: Current Streak */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
           className="p-5 rounded-2xl bg-gradient-to-br from-emerald-900 to-emerald-950 text-white shadow-md space-y-2"
         >
-          <div className="flex items-center justify-between text-emerald-300 text-xs font-bold uppercase tracking-wider">
-            <span>Estimated CO2 Diverted</span>
-            <Leaf className="w-4 h-4 text-emerald-400" />
+          <div className="flex items-center justify-between text-amber-300 text-xs font-bold uppercase tracking-wider">
+            <span>Current Streak</span>
+            <Flame className="w-4 h-4 text-amber-400 fill-amber-400" />
           </div>
           <div className="text-3xl font-black text-white font-['Space_Grotesk',sans-serif]">
-            {metrics.totalCarbonSavedKg.toFixed(1)} <span className="text-base font-normal text-emerald-300">kg</span>
+            {metrics.streakDays} <span className="text-base font-normal text-emerald-300">Days</span>
           </div>
           <div className="text-[11px] text-emerald-200 font-normal">
-            *Clearly labeled lifecycle model estimate
+            Active daily sorting habit
           </div>
         </motion.div>
       </div>

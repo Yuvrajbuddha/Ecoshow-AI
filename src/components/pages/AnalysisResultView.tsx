@@ -142,33 +142,21 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
     );
   };
 
-  // Trigger celebration confetti on high eco-score items
-  useEffect(() => {
-    if (result.ecoActionScore >= 85) {
-      try {
-        confetti({
-          particleCount: 40,
-          spread: 60,
-          origin: { y: 0.7 },
-          colors: ['#10B981', '#059669', '#34D399', '#FBBF24'],
-        });
-      } catch (e) {
-        // Safe fallback if confetti isn't supported
-      }
-    }
-  }, [result]);
-
+  // Confetti is triggered ONLY when user explicitly logs the item to My Impact
   const handleLog = () => {
     if (!logged) {
       setLogged(true);
       onLogScanToImpact(result);
       try {
         confetti({
-          particleCount: 60,
-          spread: 70,
-          origin: { y: 0.6 },
+          particleCount: 70,
+          spread: 75,
+          origin: { y: 0.65 },
+          colors: ['#10B981', '#059669', '#34D399', '#3B82F6', '#FBBF24'],
         });
-      } catch (e) {}
+      } catch (e) {
+        // Safe fallback
+      }
     }
   };
 
@@ -320,41 +308,85 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
             </div>
           )}
 
-          {/* Item Info: WHAT IS THE KIND OF WASTE */}
-          <div className="flex-1 space-y-3">
+          {/* Item Info: 6 CORE SPECIFICATION FIELDS */}
+          <div className="flex-1 space-y-4">
             <div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider mb-2">
-                <span>🔍 Question 1: What kind of waste is this?</span>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold uppercase tracking-wider border border-emerald-200">
+                  <Sparkles className="w-3 h-3 text-emerald-600" />
+                  <span>AI Detection Result</span>
+                </span>
+                <span className="text-xs text-slate-400">•</span>
+                <span className="text-xs font-semibold text-slate-500">{result.material}</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Space_Grotesk',sans-serif]">
                 {result.detectedItem}
               </h2>
             </div>
 
-            {/* Kind of Waste Matrix */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 space-y-0.5">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Material Composition</span>
-                <p className="text-xs sm:text-sm font-bold text-slate-900">{result.material}</p>
+            {/* The 6 Core Analysis Fields Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
+              {/* 1. Detected Item & Material */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">1. Detected Item</span>
+                <p className="text-xs sm:text-sm font-bold text-slate-900 truncate" title={result.detectedItem}>{result.detectedItem}</p>
+                <p className="text-[11px] text-slate-500 truncate">{result.material}</p>
               </div>
 
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 space-y-0.5">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Waste Category</span>
+              {/* 2. Waste Category */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">2. Waste Category</span>
                 <p className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
                   <span className="text-sm">{binTheme.icon}</span>
-                  <span>{result.categoryLabel}</span>
+                  <span className="truncate">{result.categoryLabel}</span>
+                </p>
+                <p className="text-[11px] text-slate-500 capitalize">{result.category} stream</p>
+              </div>
+
+              {/* 3. Correct Bin */}
+              <div className={`p-3 rounded-2xl border space-y-0.5 ${binTheme.bgLight} ${binTheme.border}`}>
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-600">3. Correct Bin</span>
+                <p className={`text-xs sm:text-sm font-black flex items-center gap-1.5 ${binTheme.textColor}`}>
+                  <span>{binTheme.icon}</span>
+                  <span className="truncate">{binTheme.name.split('(')[0].trim()}</span>
+                </p>
+                <p className="text-[11px] text-slate-600 truncate">{binTheme.name.includes('(') ? binTheme.name.slice(binTheme.name.indexOf('(')) : 'Proper Stream'}</p>
+              </div>
+
+              {/* 4. Recyclability */}
+              <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200/80 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-800">4. Recyclability</span>
+                <p className="text-xs sm:text-sm font-bold text-emerald-950 truncate">
+                  {result.recyclability || (result.category === 'recyclable' ? 'Highly Recyclable' : result.category === 'organic' ? '100% Compostable' : 'Special Collection')}
+                </p>
+                <p className="text-[11px] text-emerald-700">
+                  {result.recyclingCode ? `Resin #${result.recyclingCode}` : 'Sorted Stream'}
                 </p>
               </div>
 
-              <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200/80 space-y-0.5">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-800">Recyclability</span>
-                <p className="text-xs sm:text-sm font-bold text-emerald-950">
-                  {result.recyclability || (result.category === 'recyclable' ? 'Highly Recyclable' : result.category === 'organic' ? '100% Compostable' : 'Special / Residual')}
+              {/* 5. Confidence Score */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">5. Confidence Score</span>
+                <p className="text-xs sm:text-sm font-extrabold text-slate-900 font-mono">
+                  {result.confidence}% Match
                 </p>
+                <p className="text-[11px] text-slate-500">
+                  {isHighConfidence ? 'High Precision' : isMediumConfidence ? 'Moderate Check' : 'Low / Verify'}
+                </p>
+              </div>
+
+              {/* 6. Environmental Impact (CO2e avoided) */}
+              <div className="p-3 rounded-2xl bg-teal-50 border border-teal-200/80 space-y-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-teal-800">6. Environmental Impact</span>
+                <p className="text-xs sm:text-sm font-bold text-teal-950 flex items-center gap-1">
+                  <Leaf className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                  <span>~{result.carbonSavedKg || 0.25} kg CO₂e</span>
+                </p>
+                <p className="text-[11px] text-teal-700 font-medium">Avoided footprint</p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
               {/* Category Tag */}
               <span
                 className={`px-3 py-1 rounded-xl text-xs font-bold border flex items-center gap-1.5 shadow-2xs ${badgeClasses.bg} ${badgeClasses.border}`}
@@ -365,7 +397,7 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
 
               {result.recyclingCode && (
                 <span className="px-3 py-1 rounded-xl bg-slate-100 text-slate-700 text-xs font-mono font-bold border border-slate-200">
-                  Code: {result.recyclingCode}
+                  Resin Code #{result.recyclingCode}
                 </span>
               )}
 

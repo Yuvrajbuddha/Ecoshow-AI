@@ -43,11 +43,10 @@ export const AskAIPage: React.FC<AskAIPageProps> = ({ isDemoMode }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const quickQuestions = [
-    'Where should I dispose of a battery?',
-    'What about a broken mobile charger?',
-    'Is banana peel recyclable?',
-    'What should I do with a pizza box?',
-    'Where should I dispose of an old phone?',
+    'Can I recycle greasy pizza boxes?',
+    'How to dispose of AA batteries?',
+    'What goes in the blue bin?',
+    'Is styrofoam recyclable?',
   ];
 
   const scrollToBottom = () => {
@@ -299,12 +298,16 @@ export const AskAIPage: React.FC<AskAIPageProps> = ({ isDemoMode }) => {
         {/* Thinking Indicator */}
         {isSending && (
           <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0 shadow-xs">
               <Bot className="w-4 h-4" />
             </div>
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-500 flex items-center gap-2">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
-              <span>EcoSort AI is consulting knowledge base...</span>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-xs text-slate-600 flex items-center gap-3 shadow-xs">
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span className="font-medium">EcoSort AI is researching verified guidelines...</span>
             </div>
           </div>
         )}
