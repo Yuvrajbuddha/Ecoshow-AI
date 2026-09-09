@@ -9,7 +9,8 @@ import {
   MapPin,
   BookOpen,
   ShieldCheck,
-  X
+  X,
+  Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -59,6 +60,27 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-3 py-4">
+                <button
+                  id="mobile-drawer-history"
+                  onClick={() => {
+                    setActiveTab('history');
+                    setMoreDrawerOpen(false);
+                  }}
+                  className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col gap-2 ${
+                    activeTab === 'history'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-slate-50 border-slate-200/80 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-sm">History Gallery</div>
+                    <div className="text-xs text-slate-500">Visual scan archive</div>
+                  </div>
+                </button>
+
                 <button
                   id="mobile-drawer-centers"
                   onClick={() => {

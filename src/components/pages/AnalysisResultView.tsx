@@ -203,14 +203,25 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
 
       {/* Top Bar: Back Action & Status */}
       <div className="flex items-center justify-between">
-        <button
-          id="btn-back-to-scan"
-          onClick={onResetScan}
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Scan Another Item</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            id="btn-back-to-scan"
+            onClick={onResetScan}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Scan Another Item</span>
+          </button>
+          <span className="text-slate-300 hidden sm:inline">|</span>
+          <button
+            id="btn-nav-to-history-from-analysis"
+            onClick={() => onNavigateTab('history')}
+            className="hidden sm:inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-800 transition-colors"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>History Gallery</span>
+          </button>
+        </div>
 
         <div className="flex items-center gap-2">
           {result.isMock && (
@@ -759,6 +770,16 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
           >
             <MapPin className="w-4 h-4 text-emerald-600" />
             <span>Find Disposal Center</span>
+          </button>
+
+          {/* History Gallery Shortcut */}
+          <button
+            id="btn-view-history-shortcut"
+            onClick={() => onNavigateTab('history')}
+            className="flex-1 sm:flex-none px-4 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-sm border border-slate-200 transition-all flex items-center justify-center gap-2 active:scale-95"
+          >
+            <Layers className="w-4 h-4 text-emerald-600" />
+            <span>History Gallery</span>
           </button>
         </div>
 

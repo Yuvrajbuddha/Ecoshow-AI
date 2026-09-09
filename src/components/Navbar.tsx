@@ -11,7 +11,8 @@ import {
   Flame,
   Menu,
   X,
-  Leaf
+  Leaf,
+  Layers
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -31,6 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const navItems: { tab: ActiveTab; label: string; icon: React.ReactNode }[] = [
     { tab: 'home', label: 'Home', icon: null },
     { tab: 'scan', label: 'Scan Waste', icon: <Camera className="w-4 h-4 text-emerald-600" /> },
+    { tab: 'history', label: 'History Gallery', icon: <Layers className="w-4 h-4 text-emerald-600" /> },
     { tab: 'chat', label: 'Ask AI', icon: <MessageSquare className="w-4 h-4 text-emerald-600" /> },
     { tab: 'impact', label: 'My Impact', icon: <BarChart3 className="w-4 h-4 text-emerald-600" /> },
     { tab: 'guide', label: 'Waste Guide', icon: <BookOpen className="w-4 h-4 text-emerald-600" /> },

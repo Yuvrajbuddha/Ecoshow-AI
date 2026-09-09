@@ -54,6 +54,61 @@ export interface DisposalCenter {
   verified: boolean;
 }
 
+export interface RecyclingEvent {
+  id: string;
+  title: string;
+  tagline: string;
+  category: WasteCategory;
+  categoryLabel: string;
+  dateStr: string;
+  timeStr: string;
+  daysUntilText: string;
+  locationName: string;
+  address: string;
+  distanceKm: number;
+  badge: string;
+  urgency: 'high' | 'medium' | 'normal';
+  acceptedItems: string[];
+  organizer: string;
+  guidanceNote: string;
+  specialPerk?: string;
+  coordinates: { xPercent: number; yPercent: number };
+}
+
+export interface SimulatedLocation {
+  id: string;
+  name: string;
+  neighborhood: string;
+  radiusDescription: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface CommunityLeaderboardEntry {
+  id: string;
+  rank: number;
+  name: string;
+  avatarText: string;
+  avatarBg: string;
+  carbonSavedKg: number;
+  itemsSorted: number;
+  streakDays: number;
+  badgeTitle: string;
+  district: string;
+  isCurrentUser?: boolean;
+  kudosCount: number;
+}
+
+export interface CommunityBenchmark {
+  districtId: string;
+  districtName: string;
+  averageCarbonSavedKg: number;
+  topTenPercentAverageKg: number;
+  collectiveTotalKg: number;
+  activeRecyclersCount: number;
+  monthlyGoalKg: number;
+}
+
 export interface ImpactMetrics {
   itemsScanned: number;
   correctlySorted: number;
@@ -117,6 +172,7 @@ export interface GuideItem {
 export type ActiveTab =
   | 'home'
   | 'scan'
+  | 'history'
   | 'chat'
   | 'impact'
   | 'centers'

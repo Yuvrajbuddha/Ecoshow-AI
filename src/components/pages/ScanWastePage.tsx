@@ -1,8 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
+import jsQR from 'jsqr';
 import { WasteAnalysisResult } from '../../types';
 import { aiService } from '../../services/AIService';
 import { SAMPLE_WASTE_ITEMS } from '../../services/sampleData';
 import { optimizeImageForAI } from '../../lib/imageOptimizer';
+import { ProductQRScanner } from '../ProductQRScanner';
+import {
+  lookupProductByCode,
+  convertProductToAnalysisResult
+} from '../../services/productLabelDatabase';
 import { 
   Camera, 
   Upload, 
@@ -15,7 +21,8 @@ import {
   X,
   FlipHorizontal,
   Flame,
-  ExternalLink
+  ExternalLink,
+  QrCode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -28,6 +35,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
   onAnalysisComplete,
   isDemoMode,
 }) => {
+  const [scanMethod, setScanMethod] = useState<'photo' | 'qr'>('photo');
   const [isDragging, setIsDragging] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedMimeType, setSelectedMimeType] = useState<string>('image/jpeg');
@@ -94,6 +102,38 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
       const optByteSize = Math.round((optBase64.length * 3) / 4);
       if (!optBase64 || optByteSize <= 0) {
         throw new Error('Image optimization resulted in empty data (0 bytes).');
+      }
+
+      // Quick QR code detection check: If the uploaded photo has a packaging QR code, match database!
+      try {
+        const testImg = new Image();
+        testImg.src = optimized.dataUrl;
+        await new Promise((res) => { testImg.onload = res; testImg.onerror = res; });
+        if (testImg.width > 0 && testImg.height > 0) {
+          const testCanvas = document.createElement('canvas');
+          testCanvas.width = testImg.width;
+          testCanvas.height = testImg.height;
+          const testCtx = testCanvas.getContext('2d');
+          if (testCtx) {
+            testCtx.drawImage(testImg, 0, 0);
+            const imgData = testCtx.getImageData(0, 0, testImg.width, testImg.height);
+            const detectedQr = jsQR(imgData.data, imgData.width, imgData.height, {
+              inversionAttempts: 'attemptBoth'
+            });
+            if (detectedQr && detectedQr.data) {
+              const matchedProd = lookupProductByCode(detectedQr.data);
+              if (matchedProd) {
+                console.log('✅ QR Code detected in uploaded image matching product:', matchedProd.productName);
+                setIsAnalyzing(false);
+                const result = convertProductToAnalysisResult(matchedProd, detectedQr.data);
+                onAnalysisComplete(result);
+                return;
+              }
+            }
+          }
+        }
+      } catch (qrErr) {
+        console.warn('QR check in uploaded image bypassed:', qrErr);
       }
 
       setSelectedImage(optimized.dataUrl);
@@ -259,6 +299,27 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, width, height);
+
+    // Instant packaging QR check before sending to AI
+    try {
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const code = jsQR(imgData.data, imgData.width, imgData.height, {
+        inversionAttempts: 'attemptBoth'
+      });
+      if (code && code.data) {
+        const product = lookupProductByCode(code.data);
+        if (product) {
+          console.log('✅ QR Code detected in captured frame matching product database:', product.productName);
+          stopCamera();
+          const analysisRes = convertProductToAnalysisResult(product, code.data);
+          onAnalysisComplete(analysisRes);
+          return;
+        }
+      }
+    } catch (qrErr) {
+      console.warn('Silent QR frame scan error:', qrErr);
+    }
+
     const rawDataUrl = canvas.toDataURL('image/jpeg', 0.9);
     
     // Stop camera stream cleanly
@@ -387,7 +448,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-8">
       {/* Header */}
-      <div className="text-center space-y-2">
+      <div className="text-center space-y-3">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200">
           <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
           <span>Multimodal Waste Scanner</span>
@@ -396,11 +457,72 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
           What are you throwing away?
         </h1>
         <p className="text-slate-600 text-sm sm:text-base max-w-lg mx-auto">
-          Upload a photo or take a picture of the item you want to identify for instant disposal guidance.
+          Scan packaging QR codes for instant certified guidelines, or snap a photo for AI vision analysis.
         </p>
+
+        {/* Scan Method Mode Switcher */}
+        <div className="pt-2 flex justify-center">
+          <div className="inline-flex p-1.5 rounded-2xl bg-slate-100 border border-slate-200/80 shadow-inner">
+            <button
+              type="button"
+              id="tab-scan-photo"
+              onClick={() => setScanMethod('photo')}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                scanMethod === 'photo'
+                  ? 'bg-white text-emerald-900 shadow-sm ring-1 ring-slate-200/80'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Camera className="w-4 h-4 text-emerald-600" />
+              <span>AI Photo Vision</span>
+            </button>
+
+            <button
+              type="button"
+              id="tab-scan-qr"
+              onClick={() => setScanMethod('qr')}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                scanMethod === 'qr'
+                  ? 'bg-white text-emerald-900 shadow-sm ring-1 ring-slate-200/80'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <QrCode className="w-4 h-4 text-emerald-600" />
+              <span>Product Label QR Scanner</span>
+              <span className="hidden sm:inline-block text-[10px] font-black uppercase px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                Instant
+              </span>
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Error Alert */}
+      {scanMethod === 'qr' ? (
+        <ProductQRScanner
+          onSelectResult={onAnalysisComplete}
+          onSwitchToPhotoScan={() => setScanMethod('photo')}
+        />
+      ) : (
+        <>
+          {/* Quick Banner Prompting QR Scanner for Packaged Goods */}
+          <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 text-emerald-950">
+              <QrCode className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>
+                Have a product box, bottle, can, or carton? Use the <strong>Product Label QR Scanner</strong> for instant manufacturer recycling instructions.
+              </span>
+            </div>
+            <button
+              type="button"
+              id="btn-switch-to-qr-banner"
+              onClick={() => setScanMethod('qr')}
+              className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shrink-0 transition-all shadow-xs active:scale-95"
+            >
+              Switch to QR Scanner
+            </button>
+          </div>
+
+          {/* Error Alert */}
       {errorMessage && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
@@ -797,6 +919,8 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

@@ -10,7 +10,8 @@ import { ImpactDashboardPage } from './components/pages/ImpactDashboardPage';
 import { DisposalCentersPage } from './components/pages/DisposalCentersPage';
 import { WasteGuidePage } from './components/pages/WasteGuidePage';
 import { ResponsibleAIPage } from './components/pages/ResponsibleAIPage';
-import { SAMPLE_METRICS, SAMPLE_ACHIEVEMENTS } from './services/sampleData';
+import { RecyclingHistoryGalleryPage } from './components/pages/RecyclingHistoryGalleryPage';
+import { SAMPLE_METRICS, SAMPLE_ACHIEVEMENTS, INITIAL_RECYCLING_HISTORY } from './services/sampleData';
 import { analyzeWasteImage } from './services/AIService';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShieldCheck, Heart } from 'lucide-react';
@@ -43,9 +44,15 @@ export default function App() {
   const [recentScans, setRecentScans] = useState<WasteAnalysisResult[]>(() => {
     try {
       const saved = localStorage.getItem('ecosort_recent_scans');
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      return INITIAL_RECYCLING_HISTORY;
     } catch {
-      return [];
+      return INITIAL_RECYCLING_HISTORY;
     }
   });
 
@@ -77,6 +84,18 @@ export default function App() {
 
   const handleResetScan = () => {
     setCurrentAnalysis(null);
+  };
+
+  const handleDeleteScan = (id: string) => {
+    setRecentScans((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleClearHistory = () => {
+    setRecentScans([]);
+  };
+
+  const handleRestoreDefaults = () => {
+    setRecentScans(INITIAL_RECYCLING_HISTORY);
   };
 
   const handleRefineScan = async (hint: string) => {
@@ -134,7 +153,7 @@ export default function App() {
       };
     });
 
-    setRecentScans((prev) => [result, ...prev.slice(0, 9)]);
+    setRecentScans((prev) => [result, ...prev.filter((p) => p.id !== result.id)].slice(0, 50));
   };
 
   const handleResetUserData = () => {
@@ -200,6 +219,31 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'history' && (
+            <motion.div
+              key="history"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.25 }}
+            >
+              <RecyclingHistoryGalleryPage
+                scans={recentScans}
+                onSelectScan={(item) => {
+                  setCurrentAnalysis(item);
+                  setActiveTab('scan');
+                }}
+                onDeleteScan={handleDeleteScan}
+                onClearHistory={handleClearHistory}
+                onRestoreDefaults={handleRestoreDefaults}
+                setActiveTab={setActiveTab}
+                onAskAIWithItem={(item) => {
+                  setActiveTab('chat');
+                }}
+              />
+            </motion.div>
+          )}
+
           {activeTab === 'chat' && (
             <motion.div
               key="chat"
@@ -224,6 +268,12 @@ export default function App() {
                 metrics={metrics}
                 recentScans={recentScans}
                 badges={badges}
+                onNavigateTab={setActiveTab}
+                onSelectScan={(item) => {
+                  setCurrentAnalysis(item);
+                  setActiveTab('scan');
+                }}
+                onLogItem={handleLogScanToImpact}
               />
             </motion.div>
           )}
