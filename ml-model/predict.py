@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-EcoSort AI - Single Image Waste Classification Predictor
-========================================================
-Usage:
-    python predict.py <path_to_image.jpg> [--threshold 60.0]
-
-Returns structured waste segregation guidance:
-- detected_item
-- category
-- confidence (percentage)
-- bin
-- recyclable (boolean)
-- disposal_instruction
-- sustainability_tip
-
-Enforces strict confidence thresholding (default 60%):
-If model confidence is under 60%, safely defaults to 'Other/Unknown'
-to prevent dangerous contamination of recycling/compost streams.
+EcoSort AI - Command-Line Waste Prediction Tool
+==============================================
+Fulfills Requirements #13, #15, #16, and #17:
+- Uses identical canonical preprocessing (`preprocess.py`)
+- Loads trained model from `model/best_model.keras`
+- Applies validation-calibrated temperature scaling and confidence thresholding
+- Falls back safely to "Other/Unknown" if confidence is low
+- Returns rich structured JSON with decoupled domain knowledge:
+  {
+    "detected_item": "Plastic bottle",
+    "category": "Plastic",
+    "confidence": 94.5,
+    "bin": "Dry/Recyclable",
+    "recyclable": true,
+    "disposal_instruction": "...",
+    "sustainability_tip": "..."
+  }
 """
 
 import os
@@ -24,153 +24,135 @@ import sys
 import json
 import argparse
 from pathlib import Path
+from typing import Dict, Any, Optional
 import numpy as np
 
-# Suppress TensorFlow verbose logging
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
 BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+
+from preprocess import (
+    CANONICAL_CLASSES,
+    DEFAULT_TARGET_SIZE,
+    load_and_preprocess_image,
+)
+from knowledge_base import get_waste_metadata
+
 MODEL_PATH = BASE_DIR / "model" / "best_model.keras"
-CLASS_METADATA_PATH = BASE_DIR / "class_names.json"
-CLASS_INDICES_PATH = BASE_DIR / "model" / "class_indices.json"
-IMAGE_SIZE = (224, 224)
-DEFAULT_CONFIDENCE_THRESHOLD = 60.0  # 60 percent threshold
+CALIBRATION_FILE = BASE_DIR / "model" / "calibration.json"
 
 
-def load_model_and_metadata():
-    """Load trained Keras model and class metadata."""
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"Trained model not found at '{MODEL_PATH}'.\n"
-            "Please train the model first using:\n"
-            "  python prepare_dataset.py --seed-demo-samples\n"
-            "  python train.py"
+class WastePredictor:
+    def __init__(self, model_path: Path = MODEL_PATH):
+        self.model_path = model_path
+        self.model = None
+        self.conf_threshold = 60.0
+        self.temperature = 1.0
+        self._load_resources()
+
+    def _load_resources(self):
+        """Loads trained Keras model and calibration settings."""
+        if not self.model_path.exists():
+            raise FileNotFoundError(
+                f"Trained model not found at {self.model_path}. Run train.py first."
+            )
+
+        try:
+            import tensorflow as tf
+            from tensorflow import keras
+            self.model = keras.models.load_model(str(self.model_path))
+        except Exception as e:
+            raise RuntimeError(f"Failed to load Keras model: {e}")
+
+        if CALIBRATION_FILE.exists():
+            try:
+                with open(CALIBRATION_FILE, "r", encoding="utf-8") as f:
+                    calib = json.load(f)
+                    self.conf_threshold = calib.get("confidence_threshold", 60.0)
+                    self.temperature = calib.get("temperature", 1.0)
+            except Exception:
+                pass
+
+    def predict(
+        self,
+        image_source: Any,
+        custom_threshold: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes consistent inference on an image and enriches with domain knowledge.
+        """
+        threshold = custom_threshold if custom_threshold is not None else self.conf_threshold
+
+        # Canonical preprocessing
+        img_arr = load_and_preprocess_image(
+            image_source,
+            target_size=DEFAULT_TARGET_SIZE,
+            preserve_aspect_ratio=True
+        )
+        batch = np.expand_dims(img_arr, axis=0)
+
+        # Raw model softmax prediction
+        raw_probs = self.model.predict(batch, verbose=0)[0]
+
+        # Temperature scaling
+        scaled_logits = np.log(np.clip(raw_probs, 1e-7, 1.0)) / self.temperature
+        exp_logits = np.exp(scaled_logits - np.max(scaled_logits))
+        calibrated_probs = exp_logits / np.sum(exp_logits)
+
+        pred_idx = int(np.argmax(calibrated_probs))
+        confidence = float(np.max(calibrated_probs) * 100.0)
+        predicted_category = CANONICAL_CLASSES[pred_idx]
+
+        # Confidence Threshold Fallback
+        if confidence < threshold:
+            category_key = "other"
+            item_desc = f"Uncertain item (low confidence: {confidence:.1f}%)"
+        else:
+            category_key = predicted_category
+            item_desc = None
+
+        # Retrieve decoupled domain knowledge
+        result = get_waste_metadata(
+            category_key=category_key,
+            confidence=confidence,
+            item_description=item_desc
         )
 
-    import tensorflow as tf
-
-    model = tf.keras.models.load_model(str(MODEL_PATH))
-
-    # Load class display and segregation metadata
-    if not CLASS_METADATA_PATH.exists():
-        raise FileNotFoundError(f"Class metadata not found at '{CLASS_METADATA_PATH}'")
-
-    with open(CLASS_METADATA_PATH, "r", encoding="utf-8") as f:
-        metadata = json.load(f)
-
-    # Load class indices order
-    if CLASS_INDICES_PATH.exists():
-        with open(CLASS_INDICES_PATH, "r", encoding="utf-8") as f:
-            class_indices = json.load(f)
-            # Sort keys by index
-            class_list = [k for k, v in sorted(class_indices.items(), key=lambda item: item[1])]
-    else:
-        class_list = metadata.get("classes", [
-            "plastic", "paper", "cardboard", "glass", "metal",
-            "organic", "e_waste", "hazardous", "other"
-        ])
-
-    return model, metadata, class_list
-
-
-def preprocess_image(image_path):
-    """Load and preprocess image to match model input dimensions."""
-    from PIL import Image
-    import tensorflow as tf
-
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Image file does not exist: {image_path}")
-
-    # Open image, convert to RGB (removes alpha channel or grayscale)
-    img = Image.open(image_path).convert("RGB")
-    img = img.resize(IMAGE_SIZE, Image.Resampling.BILINEAR)
-
-    # Convert to array (224, 224, 3)
-    img_array = np.array(img, dtype=np.float32)
-
-    # Add batch dimension: (1, 224, 224, 3)
-    batch_array = np.expand_dims(img_array, axis=0)
-
-    # Note: Preprocessing (e.g. mobilenet_v3.preprocess_input or rescaling)
-    # is embedded in the Keras model architecture layer built in train.py.
-    return batch_array, img
-
-
-def predict_waste(image_path, confidence_threshold=60.0):
-    """
-    Classify the waste image and format the response according to EcoSort AI standards.
-    """
-    model, metadata, class_list = load_model_and_metadata()
-    batch_array, _ = preprocess_image(image_path)
-
-    # Run inference
-    predictions = model.predict(batch_array, verbose=0)[0]
-
-    top_idx = int(np.argmax(predictions))
-    top_confidence = float(predictions[top_idx] * 100.0)
-    raw_class_key = class_list[top_idx]
-
-    category_info = metadata["categories"].get(raw_class_key, {})
-    display_category = category_info.get("display_name", raw_class_key.title())
-
-    # Confidence Threshold Rule:
-    # If confidence is below threshold (e.g. 60%), safely fall back to 'Other/Unknown'
-    if top_confidence < confidence_threshold:
-        fallback_info = metadata["categories"].get("other", {})
-        return {
-            "detected_item": "Uncertain / Unidentified waste item",
-            "category": "Other/Unknown",
-            "confidence": round(top_confidence, 1),
-            "bin": fallback_info.get("bin", "General Waste / Landfill Residual"),
-            "recyclable": False,
-            "disposal_instruction": (
-                f"Confidence ({top_confidence:.1f}%) is below the {confidence_threshold:.0f}% certainty threshold. "
-                "Visually verify the item markings or dispose of in general household waste to avoid stream contamination."
-            ),
-            "sustainability_tip": (
-                "Ensure photos are well-lit, centered on the object, and free from heavy background clutter "
-                "to improve classification accuracy."
-            ),
-            "low_confidence_fallback": True,
-            "provisional_prediction": display_category,
+        # Include detailed class probability breakdown
+        result["probabilities"] = {
+            cls_name: round(float(calibrated_probs[i] * 100.0), 2)
+            for i, cls_name in enumerate(CANONICAL_CLASSES)
         }
+        result["calibrated_threshold"] = threshold
+        result["temperature_applied"] = self.temperature
 
-    # High Confidence Match
-    return {
-        "detected_item": category_info.get("detected_item_default", f"{display_category} waste item"),
-        "category": display_category,
-        "confidence": round(top_confidence, 1),
-        "bin": category_info.get("bin", "Check Local Sorting Guidelines"),
-        "recyclable": bool(category_info.get("recyclable", False)),
-        "disposal_instruction": category_info.get(
-            "disposal_instruction",
-            "Deposit into designated recycling or waste bin after standard preparation."
-        ),
-        "sustainability_tip": category_info.get(
-            "sustainability_tip",
-            "Proper segregation prevents contamination and conserves finite circular resources."
-        ),
-    }
+        return result
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Classify waste image with EcoSort AI model")
-    parser.add_argument("image_path", type=str, help="Path to waste image file (.jpg, .png, .webp)")
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=DEFAULT_CONFIDENCE_THRESHOLD,
-        help=f"Confidence threshold percentage (default: {DEFAULT_CONFIDENCE_THRESHOLD}%%)",
-    )
+    parser = argparse.ArgumentParser(description="EcoSort AI Single Image Waste Predictor")
+    parser.add_argument("image_path", type=str, help="Path to waste photograph")
+    parser.add_argument("--threshold", type=float, default=None, help="Confidence cutoff threshold (%)")
+    parser.add_argument("--json", action="store_true", help="Print compact JSON only")
+
     args = parser.parse_args()
 
-    try:
-        result = predict_waste(args.image_path, confidence_threshold=args.threshold)
-        # Output clean JSON matching the user requirement
-        print(json.dumps(result, indent=2))
-    except Exception as err:
-        print(json.dumps({"error": str(err)}, indent=2))
-        sys.exit(1)
+    predictor = WastePredictor()
+    res = predictor.predict(args.image_path, custom_threshold=args.threshold)
+
+    if args.json:
+        print(json.dumps(res, indent=2))
+    else:
+        print("\n" + "=" * 60)
+        print("🌱 ECOSORT AI - DISPOSAL RECOMMENDATION")
+        print("=" * 60)
+        print(f"Detected Item       : {res['detected_item']}")
+        print(f"Visual Category     : {res['category']}")
+        print(f"Confidence Score    : {res['confidence']}%")
+        print(f"Designated Bin      : {res['bin']}")
+        print(f"Curbside Recyclable : {'Yes ✅' if res['recyclable'] else 'No ❌'}")
+        print(f"Disposal Guideline  : {res['disposal_instruction']}")
+        print(f"Sustainability Tip  : {res['sustainability_tip']}")
+        print("=" * 60)
 
 
 if __name__ == "__main__":

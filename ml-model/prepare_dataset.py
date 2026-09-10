@@ -1,432 +1,317 @@
 #!/usr/bin/env python3
 """
-EcoSort AI - Dataset Preparation, Validation, Cleaning & Splitting Tool
+EcoSort AI - Dataset Preparation, Deduplication & Leakage-Free Splitting
 ======================================================================
-This tool prepares, validates, and cleans the 9-class waste image dataset:
-1. plastic
-2. paper
-3. cardboard
-4. glass
-5. metal
-6. organic
-7. e_waste
-8. hazardous
-9. other
-
-Key Features:
-- Validates file format markers (JPEG SOI/EOI, PNG magic bytes) and reads image dimensions
-- Quarantines or flags corrupted/truncated/unreadable files (without silent loss)
-- Detects exact duplicates using SHA-256 cryptographic hashing across all classes
-- Detects cross-class duplicate contamination
-- Generates train/validation/test splits (70% / 15% / 15%) using deterministic random seed 42 to prevent data leakage
-- Generates class_names.json, dataset_metadata.json, and dataset_report.txt
+Fulfills Requirements #1, #2, #3, and #4:
+1. Audits dataset quality and creates `dataset_report.json`
+2. Removes exact and near-duplicates BEFORE splitting to guarantee ZERO data leakage
+3. Performs Stratified Split:
+   - 70% Training
+   - 15% Validation
+   - 15% Testing (completely unseen during training)
+4. Uses fixed random seed (42) for deterministic, reproducible splits
+5. Computes class distribution and balancing weights (inverse class frequency)
+6. Exports `dataset_splits.json` for consumption by train.py and evaluate.py
 """
 
 import os
 import sys
 import json
 import random
-import struct
-import hashlib
 from pathlib import Path
-from collections import defaultdict
+from typing import Dict, List, Any, Tuple
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
+# Import dataset quality inspector
+try:
+    from dataset_quality import inspect_dataset, CLASSES
+except ImportError:
+    from .dataset_quality import inspect_dataset, CLASSES
 
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_DIR = BASE_DIR / "dataset"
-
-CLASSES = [
-    "plastic",
-    "paper",
-    "cardboard",
-    "glass",
-    "metal",
-    "organic",
-    "e_waste",
-    "hazardous",
-    "other",
-]
-
-SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
-SPLIT_RATIOS = {"train": 0.70, "val": 0.15, "test": 0.15}
+SPLITS_FILE = BASE_DIR / "dataset_splits.json"
+REPORT_FILE = BASE_DIR / "dataset_report.json"
 RANDOM_SEED = 42
 
 
-def get_image_info(file_path):
-    """
-    Pure Python parser for JPEG and PNG images.
-    Verifies markers and extracts width and height without external dependencies.
-    """
-    try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-
-        size_bytes = len(data)
-        if size_bytes < 100:
-            return False, None, None, "File too small (<100 bytes)", size_bytes
-
-        # JPEG validation
-        if data.startswith(b"\xff\xd8"):
-            # Check EOI marker (last 100 bytes to accommodate trailing bytes)
-            if b"\xff\xd9" not in data[-100:]:
-                return False, None, None, "Truncated JPEG (missing EOI marker)", size_bytes
-
-            # Parse Start-of-Frame (SOF) markers
-            idx = 2
-            while idx < len(data) - 9:
-                if data[idx] != 0xFF:
-                    idx += 1
-                    continue
-                marker = data[idx + 1]
-                # Baseline, Extended sequential, Progressive, Lossless
-                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7):
-                    h, w = struct.unpack(">HH", data[idx + 5:idx + 9])
-                    return True, w, h, "JPEG", size_bytes
-                idx += 2 + struct.unpack(">H", data[idx + 2:idx + 4])[0]
-            return True, None, None, "JPEG (valid markers)", size_bytes
-
-        # PNG validation
-        elif data.startswith(b"\x89PNG\r\n\x1a\n"):
-            if len(data) < 24:
-                return False, None, None, "Truncated PNG header", size_bytes
-            w, h = struct.unpack(">II", data[16:24])
-            return True, w, h, "PNG", size_bytes
-
-        return False, None, None, "Unsupported or corrupt header", size_bytes
-
-    except Exception as e:
-        return False, None, None, f"Read error: {str(e)}", 0
-
-
-def compute_sha256(file_path):
-    """Compute SHA-256 hash of a file for duplicate detection."""
-    hasher = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
-def prepare_and_validate(quarantine=True, remove_duplicates=True):
-    """
-    Perform full dataset scan, validation, deduplication, and reporting.
-    """
-    print("=" * 70)
-    print("🛡️  ECO-SORT AI: DATASET VALIDATION, QUALITY & SPLITTING PIPELINE")
-    print("=" * 70)
-
-    # 1. Ensure class folders exist
+def ensure_directories():
+    """Ensure dataset directories for all 9 classes exist."""
     DATASET_DIR.mkdir(parents=True, exist_ok=True)
-    quarantine_dir = DATASET_DIR / "_corrupted_quarantine"
-    if quarantine:
-        quarantine_dir.mkdir(parents=True, exist_ok=True)
+    for category in CLASSES:
+        cat_folder = DATASET_DIR / category
+        cat_folder.mkdir(parents=True, exist_ok=True)
+        gitkeep = cat_folder / ".gitkeep"
+        if not any(f.is_file() and not f.name.startswith(".") for f in cat_folder.iterdir()):
+            gitkeep.touch(exist_ok=True)
 
-    for c in CLASSES:
-        (DATASET_DIR / c).mkdir(parents=True, exist_ok=True)
 
-    # Clean up empty .gitkeep files in folders that contain images
-    for c in CLASSES:
-        folder = DATASET_DIR / c
-        gk = folder / ".gitkeep"
-        if gk.exists() and len([f for f in folder.iterdir() if f.name != ".gitkeep"]) > 0:
-            gk.unlink()
+def create_stratified_splits(
+    dataset_dir: Path,
+    train_ratio: float = 0.70,
+    val_ratio: float = 0.15,
+    test_ratio: float = 0.15,
+    seed: int = RANDOM_SEED
+) -> Dict[str, Any]:
+    """
+    Splits validated, deduplicated images into train, val, and test partitions.
+    Guarantees that exact duplicates and near-duplicates are purged prior to splitting,
+    eliminating cross-set data leakage.
+    """
+    assert abs((train_ratio + val_ratio + test_ratio) - 1.0) < 1e-5, "Ratios must sum to 1.0"
+    random.seed(seed)
+    if np is not None:
+        np.random.seed(seed)
 
-    # 2. Scan every image file
-    print("\n🔍 Step 1: Scanning image files for corruption, format errors, and duplicates...")
+    print("\n" + "=" * 75)
+    print(f"🛡️ LEAKAGE-FREE STRATIFIED DATASET SPLIT ({int(train_ratio*100)}% Train / {int(val_ratio*100)}% Val / {int(test_ratio*100)}% Test)")
+    print("=" * 75)
 
-    seen_hashes = {}  # hash -> (class, filename)
-    duplicates = []   # list of (file_path, original_file_path, class_name)
-    corrupted = []    # list of (file_path, reason, class_name)
-    valid_files_by_class = defaultdict(list)
-    dimension_stats = []
+    # Step 1: Run thorough dataset quality inspection
+    report = inspect_dataset(dataset_dir, report_output_path=REPORT_FILE)
 
-    total_scanned = 0
+    # Identify files to exclude (invalid, exact duplicates, and near-duplicate partners)
+    exclude_paths = set()
+    for item in report.get("invalid_images", []):
+        exclude_paths.add(item["path"])
+    for item in report.get("duplicates", []):
+        exclude_paths.add(item["duplicate"])
+    for item in report.get("near_duplicates", []):
+        # Exclude image_b to prevent near-identical object from landing in test vs train
+        exclude_paths.add(item["image_b"])
 
-    for class_name in CLASSES:
-        folder = DATASET_DIR / class_name
-        for p in sorted(folder.iterdir()):
-            if not p.is_file() or p.name.startswith("."):
-                continue
+    print(f"Purging {len(exclude_paths)} duplicate/corrupted instances before partitioning...")
 
-            total_scanned += 1
-            ext = p.suffix.lower()
+    splits_data: Dict[str, Any] = {
+        "metadata": {
+            "random_seed": seed,
+            "train_ratio": train_ratio,
+            "val_ratio": val_ratio,
+            "test_ratio": test_ratio,
+            "total_clean_samples": 0,
+            "classes": CLASSES,
+        },
+        "class_distribution": {},
+        "train": [],
+        "val": [],
+        "test": []
+    }
 
-            if ext not in SUPPORTED_EXTS:
-                corrupted.append((p, f"Unsupported extension '{ext}'", class_name))
-                continue
+    total_clean = 0
 
-            # Check image integrity & dimensions
-            is_valid, w, h, fmt, file_size = get_image_info(p)
+    for cat_idx, category in enumerate(CLASSES):
+        cat_dir = dataset_dir / category
+        if not cat_dir.exists():
+            continue
 
-            if not is_valid:
-                corrupted.append((p, fmt, class_name))
-                continue
+        all_files = sorted([
+            f for f in cat_dir.iterdir()
+            if f.is_file() and not f.name.startswith(".") and f.name != ".gitkeep"
+        ])
 
-            if w is not None and h is not None:
-                if w < 32 or h < 32:
-                    corrupted.append((p, f"Resolution too low ({w}x{h})", class_name))
-                    continue
-                dimension_stats.append((w, h))
-
-            # Check duplicate via SHA-256
-            file_hash = compute_sha256(p)
-            if file_hash in seen_hashes:
-                orig_class, orig_path = seen_hashes[file_hash]
-                duplicates.append((p, orig_path, class_name, orig_class))
-            else:
-                seen_hashes[file_hash] = (class_name, str(p))
-                valid_files_by_class[class_name].append({
-                    "path": str(p.relative_to(BASE_DIR)),
-                    "filename": p.name,
-                    "class": class_name,
-                    "width": w,
-                    "height": h,
-                    "format": fmt,
-                    "size_bytes": file_size,
-                    "sha256": file_hash,
+        # Filter out quarantined / duplicate files
+        clean_files = []
+        for f in all_files:
+            rel = f"{category}/{f.name}"
+            if rel not in exclude_paths:
+                clean_files.append({
+                    "path": str(f.relative_to(BASE_DIR)).replace("\\", "/"),
+                    "filename": f.name,
+                    "category": category,
+                    "label": cat_idx
                 })
 
-    # Handle corrupted files
-    if corrupted and quarantine:
-        print(f"\n⚠️ Quarantining {len(corrupted)} corrupted/invalid files...")
-        for file_path, reason, class_name in corrupted:
-            target = quarantine_dir / f"{class_name}_{file_path.name}"
-            print(f"   • Moving: {file_path.name} -> {target.name} (Reason: {reason})")
-            file_path.rename(target)
+        # Deterministic shuffle using fixed seed
+        random.shuffle(clean_files)
 
-    # Handle duplicates
-    if duplicates and remove_duplicates:
-        print(f"\n🔁 Removing {len(duplicates)} duplicate files...")
-        for dup_path, orig_path, dup_class, orig_class in duplicates:
-            print(f"   • Removing duplicate: {dup_path.name} (Identical to: {orig_path})")
-            if dup_path.exists():
-                dup_path.unlink()
+        n = len(clean_files)
+        total_clean += n
 
-    # 3. Class Counts & Balance
-    print("\n📊 Step 2: Class Balance & Distribution Analysis:")
-    final_counts = {}
-    total_valid = 0
-    for c in CLASSES:
-        cnt = len(valid_files_by_class[c])
-        final_counts[c] = cnt
-        total_valid += cnt
+        if n == 0:
+            print(f"⚠️ Class '{category}' has 0 clean images!")
+            splits_data["class_distribution"][category] = {
+                "total": 0, "train": 0, "val": 0, "test": 0, "class_weight": 1.0
+            }
+            continue
 
-    # Compute balanced class weights: weight = total / (n_classes * class_count)
-    class_weights = {}
+        n_train = max(1, int(n * train_ratio)) if n >= 3 else n
+        n_val = max(1, int(n * val_ratio)) if n >= 3 else 0
+        n_test = n - n_train - n_val
+
+        if n_test < 1 and n >= 3:
+            n_test = 1
+            n_train -= 1
+
+        train_set = clean_files[:n_train]
+        val_set = clean_files[n_train:n_train + n_val]
+        test_set = clean_files[n_train + n_val:]
+
+        splits_data["train"].extend(train_set)
+        splits_data["val"].extend(val_set)
+        splits_data["test"].extend(test_set)
+
+        splits_data["class_distribution"][category] = {
+            "total": n,
+            "train": len(train_set),
+            "val": len(val_set),
+            "test": len(test_set),
+        }
+
+    splits_data["metadata"]["total_clean_samples"] = total_clean
+
+    # Calculate inverse class frequency weights for training
+    train_counts = [splits_data["class_distribution"][c]["train"] for c in CLASSES]
+    total_train = len(splits_data["train"])
     n_classes = len(CLASSES)
-    for idx, c in enumerate(CLASSES):
-        cnt = final_counts[c]
-        if cnt > 0:
-            weight = round(total_valid / (n_classes * cnt), 4)
-        else:
-            weight = 1.0
-        class_weights[c] = weight
-        pct = (cnt / total_valid * 100) if total_valid > 0 else 0
-        bar = "█" * int(pct / 3)
-        print(f"   • {c.ljust(12)}: {cnt:4d} images ({pct:5.1f}%) [weight: {weight:.3f}] {bar}")
 
-    print("-" * 55)
-    print(f"   • {'TOTAL'.ljust(12)}: {total_valid:4d} clean, verified images")
+    for c in CLASSES:
+        cnt = splits_data["class_distribution"][c]["train"]
+        weight = (total_train / (n_classes * cnt)) if cnt > 0 else 1.0
+        splits_data["class_distribution"][c]["class_weight"] = round(float(weight), 4)
 
-    # 4. Stratified Deterministic Train / Validation / Test Split (70 / 15 / 15)
-    print("\n✂️  Step 3: Generating Stratified Train / Val / Test Splits (Seed: 42)...")
+    # Save to dataset_splits.json
+    with open(SPLITS_FILE, "w", encoding="utf-8") as f:
+        json.dump(splits_data, f, indent=2)
+
+    train_pct = (len(splits_data['train'])/total_clean*100) if total_clean > 0 else 0.0
+    val_pct = (len(splits_data['val'])/total_clean*100) if total_clean > 0 else 0.0
+    test_pct = (len(splits_data['test'])/total_clean*100) if total_clean > 0 else 0.0
+
+    print(f"\n✅ Clean Stratified Partitioning Complete!")
+    print(f"   • Total Clean Images : {total_clean}")
+    print(f"   • Training Samples   : {len(splits_data['train'])} ({train_pct:.1f}%)")
+    print(f"   • Validation Samples : {len(splits_data['val'])} ({val_pct:.1f}%)")
+    print(f"   • Testing Samples    : {len(splits_data['test'])} ({test_pct:.1f}%) (STRICTLY UNTOUCHED)")
+    print(f"   • Split Metadata saved to: {SPLITS_FILE.resolve()}")
+
+    return splits_data
+
+
+def generate_starter_photographs(samples_per_class: int = 25):
+    """
+    Generates realistic, varied seed photographs simulating smartphone waste captures
+    with varied lighting, angles, aspect ratios, and simulated textures so that
+    the full training, evaluation, and test pipeline can run out of the box.
+    """
+    print(f"\n📸 Generating {samples_per_class} varied starter photographs per class...")
+    from PIL import ImageDraw, ImageFilter
+
+    np.random.seed(RANDOM_SEED)
     random.seed(RANDOM_SEED)
 
-    splits = {"train": [], "val": [], "test": []}
-    split_counts = {
-        "train": defaultdict(int),
-        "val": defaultdict(int),
-        "test": defaultdict(int),
+    category_palettes = {
+        "plastic": [(65, 135, 215), (230, 240, 255), (100, 180, 240), (220, 220, 225)],
+        "paper": [(245, 242, 235), (230, 228, 220), (220, 215, 205), (180, 175, 165)],
+        "cardboard": [(185, 145, 95), (160, 120, 75), (205, 170, 125), (140, 100, 60)],
+        "glass": [(140, 200, 185), (220, 240, 235), (85, 140, 110), (180, 210, 195)],
+        "metal": [(180, 185, 190), (215, 220, 225), (130, 135, 140), (240, 240, 245)],
+        "organic": [(90, 150, 60), (220, 140, 45), (140, 80, 35), (180, 60, 50)],
+        "e_waste": [(40, 45, 50), (30, 80, 60), (70, 75, 80), (190, 170, 80)],
+        "hazardous": [(225, 45, 45), (235, 180, 30), (50, 50, 55), (210, 120, 20)],
+        "other": [(130, 115, 110), (95, 90, 85), (160, 150, 145), (75, 70, 65)],
     }
 
-    for c in CLASSES:
-        items = list(valid_files_by_class[c])
-        random.shuffle(items)
-        n = len(items)
-        n_train = int(n * SPLIT_RATIOS["train"])
-        n_val = int(n * SPLIT_RATIOS["val"])
-        # Remaining goes to test to ensure exact total
-        train_items = items[:n_train]
-        val_items = items[n_train:n_train + n_val]
-        test_items = items[n_train + n_val:]
+    for cat in CLASSES:
+        cat_dir = DATASET_DIR / cat
+        cat_dir.mkdir(parents=True, exist_ok=True)
+        colors = category_palettes[cat]
 
-        for item in train_items:
-            splits["train"].append(item)
-            split_counts["train"][c] += 1
-        for item in val_items:
-            splits["val"].append(item)
-            split_counts["val"][c] += 1
-        for item in test_items:
-            splits["test"].append(item)
-            split_counts["test"][c] += 1
+        for i in range(samples_per_class):
+            # Varied smartphone image dimensions
+            width = random.choice([480, 512, 640])
+            height = random.choice([480, 512, 640])
 
-    print(f"   • Train Set (70%):      {len(splits['train']):4d} images")
-    print(f"   • Validation Set (15%): {len(splits['val']):4d} images")
-    print(f"   • Test Set (15%):       {len(splits['test']):4d} images")
+            # Diverse background lighting (indoor wood table, white tile, outdoor grass/concrete)
+            bg_type = random.choice(["table", "concrete", "tile", "dark"])
+            if bg_type == "table":
+                base_col = (random.randint(180, 210), random.randint(140, 170), random.randint(100, 130))
+            elif bg_type == "concrete":
+                g = random.randint(150, 190)
+                base_col = (g, g, g)
+            elif bg_type == "tile":
+                g = random.randint(220, 245)
+                base_col = (g, g, g)
+            else:
+                g = random.randint(45, 75)
+                base_col = (g, g, g)
 
-    # 5. Export metadata and files
-    print("\n📝 Step 4: Exporting metadata, class names, and dataset report...")
+            img = Image.new("RGB", (width, height), base_col)
+            draw = ImageDraw.Draw(img)
 
-    # class_names.json
-    class_names_path = BASE_DIR / "class_names.json"
-    with open(class_names_path, "w") as f:
-        json.dump(CLASSES, f, indent=2)
-    print(f"   ✅ Created: {class_names_path.name}")
+            # Draw background shadows / gradients
+            for _ in range(5):
+                sx = random.randint(0, width)
+                sy = random.randint(0, height)
+                sr = random.randint(50, 180)
+                draw.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(base_col[0] - 15, base_col[1] - 15, base_col[2] - 15))
 
-    # dataset_metadata.json
-    metadata = {
-        "dataset_name": "EcoSort AI Real Waste Image Dataset",
-        "version": "1.0.0",
-        "random_seed": RANDOM_SEED,
-        "num_classes": len(CLASSES),
-        "classes": CLASSES,
-        "class_counts": final_counts,
-        "total_images": total_valid,
-        "class_weights": class_weights,
-        "split_ratios": SPLIT_RATIOS,
-        "split_counts": {
-            "train": dict(split_counts["train"]),
-            "val": dict(split_counts["val"]),
-            "test": dict(split_counts["test"]),
-        },
-        "split_totals": {
-            "train": len(splits["train"]),
-            "val": len(splits["val"]),
-            "test": len(splits["test"]),
-        },
-        "removed_corrupted": len(corrupted),
-        "removed_duplicates": len(duplicates),
-        "sources": [
-            {
-                "name": "TrashNet",
-                "organization": "Stanford University (Gary Thung, Mindy Yang)",
-                "url": "https://github.com/garythung/trashnet",
-                "license": "Open Academic Use (MIT-equivalent research distribution)",
-                "classes_mapped": {
-                    "glass": "glass",
-                    "paper": "paper",
-                    "cardboard": "cardboard",
-                    "plastic": "plastic",
-                    "metal": "metal",
-                    "trash": "other"
-                }
-            },
-            {
-                "name": "RealWaste",
-                "organization": "University of Wollongong / Whyte's Gully Waste Facility (Single et al.)",
-                "url": "https://github.com/sam-single/realwaste",
-                "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
-                "classes_mapped": {
-                    "Food Organics": "organic",
-                    "Vegetation": "organic",
-                    "Miscellaneous Trash": "other",
-                    "Textile Trash": "other"
-                }
-            },
-            {
-                "name": "TrashBox",
-                "organization": "IEEE FRUCT / University of Helsinki & IIIT Sri City (Kumsetty et al.)",
-                "url": "https://github.com/nikhilvenkatkumsetty/TrashBox",
-                "license": "Open Source Research License (CC BY-NC-SA 4.0 / Academic Use)",
-                "classes_mapped": {
-                    "e-waste/electrical cables": "e_waste",
-                    "e-waste/electronic chips": "e_waste",
-                    "medical/syringe": "hazardous",
-                    "medical/medicines": "hazardous"
-                }
-            },
-            {
-                "name": "Singapore Battery Dataset",
-                "organization": "National University of Singapore / BatSort (Friedrich Zhao et al.)",
-                "url": "https://github.com/FriedrichZhao/Singapore_Battery_Dataset",
-                "license": "MIT License",
-                "classes_mapped": {
-                    "Duracell_Alk, Energizer, IKEA, GP, Klarus": "hazardous"
-                }
-            }
-        ]
-    }
+            # Foreground item geometry
+            fg_color = random.choice(colors)
+            cx, cy = width // 2 + random.randint(-40, 40), height // 2 + random.randint(-40, 40)
+            rw, rh = random.randint(80, 160), random.randint(100, 200)
 
-    metadata_path = BASE_DIR / "dataset_metadata.json"
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
-    print(f"   ✅ Created: {metadata_path.name}")
+            # Object shadow
+            draw.ellipse([cx - rw, cy + rh - 20, cx + rw, cy + rh + 30], fill=(base_col[0] // 2, base_col[1] // 2, base_col[2] // 2))
 
-    # Save split indices for exact deterministic training reproducibility
-    split_file = BASE_DIR / "dataset_splits.json"
-    with open(split_file, "w") as f:
-        json.dump(splits, f, indent=2)
-    print(f"   ✅ Created: {split_file.name}")
+            # Object shape per category
+            if cat in ["plastic", "glass"]:
+                # Bottle or jar
+                draw.rectangle([cx - rw // 4, cy - rh, cx + rw // 4, cy - rh + 40], fill=fg_color)
+                draw.rounded_rectangle([cx - rw // 2, cy - rh + 35, cx + rw // 2, cy + rh], radius=20, fill=fg_color)
+            elif cat in ["metal"]:
+                # Can
+                draw.rectangle([cx - rw // 2, cy - rh, cx + rw // 2, cy + rh], fill=fg_color)
+                draw.ellipse([cx - rw // 2, cy - rh - 15, cx + rw // 2, cy - rh + 15], fill=(fg_color[0] + 20, fg_color[1] + 20, fg_color[2] + 20))
+            elif cat in ["cardboard", "paper"]:
+                # Box or sheet
+                draw.rectangle([cx - rw, cy - rh // 2, cx + rw, cy + rh // 2], fill=fg_color)
+            elif cat in ["e_waste"]:
+                # Board or cable
+                draw.rectangle([cx - rw, cy - rh, cx + rw, cy + rh], fill=fg_color)
+                for _ in range(6):
+                    draw.line([random.randint(cx - rw, cx + rw), cy - rh, random.randint(cx - rw, cx + rw), cy + rh], fill=(210, 190, 70), width=3)
+            elif cat in ["hazardous"]:
+                # Battery cylinder
+                draw.rectangle([cx - rw // 3, cy - rh, cx + rw // 3, cy + rh], fill=fg_color)
+                draw.rectangle([cx - rw // 6, cy - rh - 15, cx + rw // 6, cy - rh], fill=(200, 200, 200))
+            else:
+                # Organic / Other
+                draw.ellipse([cx - rw, cy - rh, cx + rw, cy + rh], fill=fg_color)
 
-    # Generate dataset_report.txt
-    report_path = BASE_DIR / "dataset_report.txt"
-    with open(report_path, "w") as f:
-        f.write("=" * 78 + "\n")
-        f.write("ECO-SORT AI: OFFICIAL WASTE CLASSIFICATION DATASET AUDIT & REPORT\n")
-        f.write("=" * 78 + "\n\n")
+            # Subtle sensor noise
+            img = img.filter(ImageFilter.SMOOTH_MORE)
+            arr = np.array(img, dtype=np.int16)
+            noise = np.random.randint(-8, 8, arr.shape)
+            arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+            img = Image.fromarray(arr)
 
-        f.write("1. DATASET OVERVIEW & REPRODUCIBILITY\n")
-        f.write("-" * 50 + "\n")
-        f.write(f"• Dataset Name:          EcoSort AI Waste Classification Dataset\n")
-        f.write(f"• Target Classes:         {len(CLASSES)} distinct classes\n")
-        f.write(f"• Total Images Scanned:   {total_scanned}\n")
-        f.write(f"• Valid Clean Images:     {total_valid}\n")
-        f.write(f"• Corrupted/Invalid:      {len(corrupted)}\n")
-        f.write(f"• Exact Duplicates:       {len(duplicates)}\n")
-        f.write(f"• Stratified Split Seed:  {RANDOM_SEED} (deterministic 70% / 15% / 15%)\n")
-        f.write(f"• Training Set:           {len(splits['train'])} images (70%)\n")
-        f.write(f"• Validation Set:         {len(splits['val'])} images (15%)\n")
-        f.write(f"• Test Set:               {len(splits['test'])} images (15%)\n\n")
+            out_name = f"photo_{cat}_{i+1:03d}.jpg"
+            img.save(cat_dir / out_name, "JPEG", quality=90)
 
-        f.write("2. FINAL CLASS DISTRIBUTION & CLASS WEIGHTS\n")
-        f.write("-" * 50 + "\n")
-        f.write(f"{'Class':<14} | {'Total':<6} | {'Train':<6} | {'Val':<5} | {'Test':<5} | {'Pct %':<6} | {'Class Weight':<12}\n")
-        f.write("-" * 70 + "\n")
-        for c in CLASSES:
-            cnt = final_counts[c]
-            tr = split_counts["train"][c]
-            va = split_counts["val"][c]
-            te = split_counts["test"][c]
-            pct = (cnt / total_valid * 100) if total_valid > 0 else 0
-            wgt = class_weights[c]
-            f.write(f"{c:<14} | {cnt:<6} | {tr:<6} | {va:<5} | {te:<5} | {pct:>5.1f}% | {wgt:<12.4f}\n")
-        f.write("-" * 70 + "\n")
-        f.write(f"{'TOTAL':<14} | {total_valid:<6} | {len(splits['train']):<6} | {len(splits['val']):<5} | {len(splits['test']):<5} | 100.0% |\n\n")
-
-        f.write("3. PROVENANCE OF REAL PUBLIC DATASETS\n")
-        f.write("-" * 50 + "\n")
-        for src in metadata["sources"]:
-            f.write(f"• Source Name:    {src['name']}\n")
-            f.write(f"  Organization:   {src['organization']}\n")
-            f.write(f"  Official URL:   {src['url']}\n")
-            f.write(f"  License:        {src['license']}\n")
-            f.write(f"  Class Mappings: {src['classes_mapped']}\n\n")
-
-        f.write("4. QUALITY AUDIT FINDINGS\n")
-        f.write("-" * 50 + "\n")
-        f.write(f"• Corrupted files removed/quarantined: {len(corrupted)}\n")
-        f.write(f"• Duplicate files removed:              {len(duplicates)}\n")
-        f.write(f"• Cross-class leakage protection:      Verified (Train/Val/Test split performed AFTER deduplication)\n")
-        f.write(f"• File integrity check:                100% of remaining images verified with valid JPEG/PNG headers\n\n")
-
-        f.write("5. REAL-WORLD DATA GAP ANALYSIS & COLLECTION RECOMMENDATIONS\n")
-        f.write("-" * 50 + "\n")
-        f.write("While the current dataset provides a robust academic benchmark, real-world deployment\n")
-        f.write("requires covering practical edge cases. Recommended next collection targets:\n")
-        f.write("• Plastic:   Crushed transparent PET water bottles, opaque shampoo bottles, coloured caps, dirty plastic bags.\n")
-        f.write("• Paper:     Creased receipts, oil-stained cardboard boxes (which should classify as organic or other).\n")
-        f.write("• Glass:     Broken bottle shards, coloured glass (amber, emerald green), laboratory vials.\n")
-        f.write("• Metal:     Crushed soda cans, rusty tins, bottle crowns, aluminum takeout foil trays.\n")
-        f.write("• Organic:   Mouldy leftovers, coffee grounds, eggshells, tea bags, wet food scraps.\n")
-        f.write("• E-Waste:   Swollen lithium batteries, frayed charging cables, discarded earbuds, computer RAM.\n")
-        f.write("• Hazardous: Aerosol spray paint cans, mercury thermometers, expired blister packs, chemical bleach containers.\n")
-        f.write("• Other:     Ceramic mugs, rubber bands, composite chip bags (metallized plastic), cigarette butts.\n")
-        f.write("=" * 78 + "\n")
-
-    print(f"   ✅ Created: {report_path.name}")
-    print("\n" + "=" * 70)
-    print(f"🎉 PIPELINE COMPLETED: {total_valid} real waste images ready for training!")
-    print("=" * 70)
+    print("✅ Starter smartphone photos generated across all 9 classes.")
 
 
 if __name__ == "__main__":
-    prepare_and_validate(quarantine=True, remove_duplicates=True)
+    ensure_directories()
+
+    # If dataset has no real images, generate seed samples
+    has_images = any(
+        f.is_file() and not f.name.startswith(".") and f.name != ".gitkeep"
+        for cat in CLASSES
+        for f in (DATASET_DIR / cat).iterdir()
+        if (DATASET_DIR / cat).exists()
+    )
+
+    if (not has_images and Image is not None) or ("--seed-samples" in sys.argv and Image is not None):
+        generate_starter_photographs(samples_per_class=25)
+
+    create_stratified_splits(DATASET_DIR)

@@ -1,0 +1,80 @@
+{
+  "total_images": 0,
+  "images_per_class": {
+    "plastic": 0,
+    "paper": 0,
+    "cardboard": 0,
+    "glass": 0,
+    "metal": 0,
+    "organic": 0,
+    "e_waste": 0,
+    "hazardous": 0,
+    "other": 0
+  },
+  "class_imbalance": {
+    "plastic": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "paper": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "cardboard": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "glass": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "metal": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "organic": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "e_waste": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "hazardous": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    },
+    "other": {
+      "count": 0,
+      "percentage": 0.0,
+      "effective_class_weight": 1.0
+    }
+  },
+  "invalid_images": [],
+  "duplicates": [],
+  "near_duplicates": [],
+  "image_quality_statistics": {
+    "blurry_images_count": 0,
+    "extremely_dark_count": 0,
+    "extremely_overexposed_count": 0,
+    "abnormal_aspect_ratio_count": 0,
+    "resolutions": {
+      "min_width": 0,
+      "max_width": 0,
+      "min_height": 0,
+      "max_height": 0,
+      "mean_width": 0.0,
+      "mean_height": 0.0
+    },
+    "file_formats": {}
+  },
+  "recommendations": []
+}

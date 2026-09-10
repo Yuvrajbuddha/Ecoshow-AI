@@ -1,19 +1,27 @@
-# Machine Learning Core
-tensorflow>=2.15.0
-keras>=3.0.0
+# EcoSort AI - Production Machine Learning Requirements
+# Compatible with Python 3.10+ and Windows / Linux / macOS
+# =============================================================================
 
-# API & Web Server
+# Deep Learning Framework & Keras 3
+tensorflow>=2.16.1; sys_platform != 'darwin'
+tensorflow-macos>=2.16.1; sys_platform == 'darwin'
+
+# Core Scientific Computing & Image Processing
+numpy>=1.24.0,<2.0.0
+scipy>=1.11.0
+pillow>=10.0.0
+opencv-python-headless>=4.8.0
+
+# Machine Learning & Metrics
+scikit-learn>=1.3.0
+
+# Visualization & Reporting
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Fast API Microservice & Serving
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
-python-multipart>=0.0.9
 pydantic>=2.6.0
+python-multipart>=0.0.9
 requests>=2.31.0
-
-# Image Processing & Utilities
-pillow>=10.2.0
-numpy>=1.24.0
-
-# Evaluation & Metrics
-scikit-learn>=1.4.0
-matplotlib>=3.8.0
-seaborn>=0.13.0
