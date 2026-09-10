@@ -1,0 +1,136 @@
+{
+  "dataset_name": "EcoSort AI Real Waste Image Dataset",
+  "version": "1.0.0",
+  "random_seed": 42,
+  "num_classes": 9,
+  "classes": [
+    "plastic",
+    "paper",
+    "cardboard",
+    "glass",
+    "metal",
+    "organic",
+    "e_waste",
+    "hazardous",
+    "other"
+  ],
+  "class_counts": {
+    "plastic": 482,
+    "paper": 594,
+    "cardboard": 403,
+    "glass": 499,
+    "metal": 409,
+    "organic": 482,
+    "e_waste": 205,
+    "hazardous": 428,
+    "other": 220
+  },
+  "total_images": 3722,
+  "class_weights": {
+    "plastic": 0.858,
+    "paper": 0.6962,
+    "cardboard": 1.0262,
+    "glass": 0.8288,
+    "metal": 1.0111,
+    "organic": 0.858,
+    "e_waste": 2.0173,
+    "hazardous": 0.9663,
+    "other": 1.8798
+  },
+  "split_ratios": {
+    "train": 0.7,
+    "val": 0.15,
+    "test": 0.15
+  },
+  "split_counts": {
+    "train": {
+      "plastic": 337,
+      "paper": 415,
+      "cardboard": 282,
+      "glass": 349,
+      "metal": 286,
+      "organic": 337,
+      "e_waste": 143,
+      "hazardous": 299,
+      "other": 154
+    },
+    "val": {
+      "plastic": 72,
+      "paper": 89,
+      "cardboard": 60,
+      "glass": 74,
+      "metal": 61,
+      "organic": 72,
+      "e_waste": 30,
+      "hazardous": 64,
+      "other": 33
+    },
+    "test": {
+      "plastic": 73,
+      "paper": 90,
+      "cardboard": 61,
+      "glass": 76,
+      "metal": 62,
+      "organic": 73,
+      "e_waste": 32,
+      "hazardous": 65,
+      "other": 33
+    }
+  },
+  "split_totals": {
+    "train": 2602,
+    "val": 555,
+    "test": 565
+  },
+  "removed_corrupted": 20,
+  "removed_duplicates": 8,
+  "sources": [
+    {
+      "name": "TrashNet",
+      "organization": "Stanford University (Gary Thung, Mindy Yang)",
+      "url": "https://github.com/garythung/trashnet",
+      "license": "Open Academic Use (MIT-equivalent research distribution)",
+      "classes_mapped": {
+        "glass": "glass",
+        "paper": "paper",
+        "cardboard": "cardboard",
+        "plastic": "plastic",
+        "metal": "metal",
+        "trash": "other"
+      }
+    },
+    {
+      "name": "RealWaste",
+      "organization": "University of Wollongong / Whyte's Gully Waste Facility (Single et al.)",
+      "url": "https://github.com/sam-single/realwaste",
+      "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+      "classes_mapped": {
+        "Food Organics": "organic",
+        "Vegetation": "organic",
+        "Miscellaneous Trash": "other",
+        "Textile Trash": "other"
+      }
+    },
+    {
+      "name": "TrashBox",
+      "organization": "IEEE FRUCT / University of Helsinki & IIIT Sri City (Kumsetty et al.)",
+      "url": "https://github.com/nikhilvenkatkumsetty/TrashBox",
+      "license": "Open Source Research License (CC BY-NC-SA 4.0 / Academic Use)",
+      "classes_mapped": {
+        "e-waste/electrical cables": "e_waste",
+        "e-waste/electronic chips": "e_waste",
+        "medical/syringe": "hazardous",
+        "medical/medicines": "hazardous"
+      }
+    },
+    {
+      "name": "Singapore Battery Dataset",
+      "organization": "National University of Singapore / BatSort (Friedrich Zhao et al.)",
+      "url": "https://github.com/FriedrichZhao/Singapore_Battery_Dataset",
+      "license": "MIT License",
+      "classes_mapped": {
+        "Duracell_Alk, Energizer, IKEA, GP, Klarus": "hazardous"
+      }
+    }
+  ]
+}

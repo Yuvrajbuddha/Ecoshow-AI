@@ -406,6 +406,100 @@ function getFallbackAnalysis(hint?: string, sampleId?: string, imageBase64?: str
   };
 }
 
+// ─── Local Machine Learning Service Integration (MobileNetV3 / EfficientNet) ───
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "http://127.0.0.1:8000";
+
+async function queryPythonMlService(imageBase64: string, threshold = 60.0): Promise<any | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    const response = await fetch(`${ML_SERVICE_URL}/classify-base64`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: imageBase64, threshold }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function formatMlResultToWasteAnalysis(mlData: any, imageBase64: string): any {
+  const rawCat = String(mlData.category || "Other/Unknown").trim();
+  const catLower = rawCat.toLowerCase();
+  let normalizedCategory: "recyclable" | "organic" | "ewaste" | "hazardous" | "general" = "recyclable";
+  let categoryLabel = rawCat;
+
+  if (catLower.includes("wet") || catLower.includes("organic")) {
+    normalizedCategory = "organic";
+    categoryLabel = "Organic/Wet Waste";
+  } else if (catLower.includes("e-waste") || catLower.includes("electronic")) {
+    normalizedCategory = "ewaste";
+    categoryLabel = "E-Waste";
+  } else if (catLower.includes("hazard")) {
+    normalizedCategory = "hazardous";
+    categoryLabel = "Hazardous Waste";
+  } else if (catLower.includes("other") || catLower.includes("unknown") || catLower.includes("trash")) {
+    normalizedCategory = "general";
+    categoryLabel = "Other/Unknown";
+  } else {
+    normalizedCategory = "recyclable";
+    categoryLabel = rawCat;
+  }
+
+  const isSpecial = normalizedCategory === "ewaste" || normalizedCategory === "hazardous";
+  const confidence = typeof mlData.confidence === "number" ? mlData.confidence : 90;
+  const isRecyclable = Boolean(mlData.recyclable);
+
+  return {
+    detectedItem: mlData.detected_item || "Identified Waste Item",
+    material: mlData.category || "Classified Material",
+    category: normalizedCategory,
+    categoryLabel: categoryLabel,
+    recyclability: isRecyclable
+      ? "Recyclable (Rinse/clean if applicable)"
+      : (isSpecial ? "Specialized Drop-off Required (Do NOT landfill)" : "Non-Recyclable Landfill Residual"),
+    disposalInstructions: mlData.disposal_instruction || "Deposit into the recommended waste container.",
+    binColor: mlData.bin || "Check Local Bin Guidelines",
+    whereToSegregate: `Deposit into ${mlData.bin || "designated container"}. ${mlData.disposal_instruction || ""}`,
+    segregationSteps: [
+      `1. Classification: Identified by trained ML model as ${mlData.detected_item || categoryLabel}`,
+      `2. Preparation: ${mlData.disposal_instruction || "Ensure item is emptied and cleared of major residue."}`,
+      `3. Segregation: Place into ${mlData.bin || "recommended container"}.`,
+      `4. Eco Impact: ${mlData.sustainability_tip || "Proper sorting preserves recyclable materials."}`
+    ],
+    confidence: confidence,
+    confidenceLevel: confidence >= 85 ? "high" : "medium",
+    environmentalImpact: mlData.sustainability_tip || "Proper segregation diverts materials from landfill.",
+    recommendedDisposal: mlData.disposal_instruction || "Deposit into designated bin.",
+    whyThisResult: `Classified by trained deep learning model (${categoryLabel}, ${confidence}% confidence).`,
+    ecoTip: mlData.sustainability_tip || "Reuse or recycle materials whenever possible.",
+    ecoActionScore: Math.min(98, Math.max(70, Math.round(confidence))),
+    specialHandlingRequired: isSpecial,
+    specialHandlingNotes: isSpecial ? "Warning: Do not dispose into standard curbside household bins." : undefined,
+    contaminationRisk: isRecyclable ? "low" : "none",
+    carbonSavedKg: normalizedCategory === "recyclable" ? 0.28 : normalizedCategory === "organic" ? 0.22 : normalizedCategory === "ewaste" ? 0.50 : 0.10,
+    imageUrl: imageBase64,
+    id: `ml-scan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+    timestamp: new Date().toISOString(),
+    isMock: false,
+    rawJson: {
+      detected_item: mlData.detected_item,
+      category: mlData.category,
+      material: mlData.category,
+      confidence: confidence,
+      bin: mlData.bin,
+      recyclable: isRecyclable,
+      reason: `Classified by trained local ML model (${categoryLabel})`,
+      disposal_instruction: mlData.disposal_instruction,
+      sustainability_tip: mlData.sustainability_tip
+    }
+  };
+}
+
 // API: Analyze Waste Image (Multimodal Vision) - supports both /api/analyze-waste and /analyze-waste
 app.post(["/api/analyze-waste", "/analyze-waste"], async (req: Request, res: Response): Promise<void> => {
   const serverTime = new Date().toISOString();
@@ -474,12 +568,58 @@ app.post(["/api/analyze-waste", "/analyze-waste"], async (req: Request, res: Res
     console.log("Force Mock Flag:", Boolean(forceMock));
     console.log("Gemini API Client Initialized?:", Boolean(ai));
 
+    // If caller explicitly preferred local ML model or queried engine=ml, try ML service first
+    if ((req.body?.preferMl || req.query?.engine === "ml" || process.env.PREFER_LOCAL_ML === "true") && cleanBase64 && cleanBase64.length >= 20) {
+      console.log("⚡ Explicit local ML service engine requested. Querying Python FastAPI microservice...");
+      const mlResult = await queryPythonMlService(cleanBase64, typeof req.body.threshold === "number" ? req.body.threshold : 60.0);
+      if (mlResult && !mlResult.error && mlResult.category) {
+        console.log("✅ Successfully classified via local MobileNetV3 ML model:", mlResult.category);
+        const formatted = formatMlResultToWasteAnalysis(mlResult, imageBase64);
+        console.groupEnd();
+        res.json({
+          success: true,
+          result: formatted,
+          isDemoMode: false,
+          engine: "mobilenet_v3_local",
+          requestId: clientReqId,
+          sessionId: clientSessionId,
+          session_id: clientSessionId,
+          timestamp: clientTimestamp,
+          salt: clientSalt,
+        });
+        return;
+      }
+    }
+
     // Only return mock fixture if explicitly requested for a sample item AND forced, or if no image was provided
     if ((forceMock && sampleId) || !ai || !cleanBase64 || cleanBase64.length < 20) {
       console.warn("⚠️ Triggered Early Fallback Condition:");
       if (!ai) console.warn("   -> Reason: Gemini API client is not initialized (missing API key)");
       else if (forceMock && sampleId) console.warn(`   -> Reason: Sample fixture "${sampleId}" requested with forceMock=true`);
       else if (!cleanBase64 || cleanBase64.length < 20) console.warn(`   -> Reason: Image base64 data is empty or too short (${cleanBase64.length} chars)`);
+
+      // If Gemini client is not initialized, automatically check if local Python ML model service is running
+      if (!ai && cleanBase64 && cleanBase64.length >= 20) {
+        console.log("🔍 Checking local Python FastAPI ML service as primary engine...");
+        const mlResult = await queryPythonMlService(cleanBase64);
+        if (mlResult && !mlResult.error && mlResult.category) {
+          console.log("✅ Successfully classified via local MobileNetV3 ML model:", mlResult.category);
+          const formatted = formatMlResultToWasteAnalysis(mlResult, imageBase64);
+          console.groupEnd();
+          res.json({
+            success: true,
+            result: formatted,
+            isDemoMode: false,
+            engine: "mobilenet_v3_local",
+            requestId: clientReqId,
+            sessionId: clientSessionId,
+            session_id: clientSessionId,
+            timestamp: clientTimestamp,
+            salt: clientSalt,
+          });
+          return;
+        }
+      }
 
       const result = getFallbackAnalysis(hint, sampleId, imageBase64);
       console.log("Early Fallback Result Generated:\n", JSON.stringify(result, null, 2));
@@ -497,7 +637,7 @@ app.post(["/api/analyze-waste", "/analyze-waste"], async (req: Request, res: Res
       return;
     }
 
-    const promptText = `You are EcoSort AI, a multimodal waste classification and segregation vision model.
+    const promptText = `You are an AI-powered Waste Classification Assistant called EcoSort AI.
 
 [session_id: "${clientSessionId}"]
 Session ID / Nonce: ${clientSessionId}
@@ -505,64 +645,67 @@ Request ID: ${clientReqId}
 Timestamp: ${clientTimestamp}
 Salt: ${clientSalt}
 
-CRITICAL WASTE IDENTIFICATION DIRECTIVES (You MUST output all 6 key metrics):
-1. WASTE ITEM NAME (detectedItem):
-   - Identify the primary disposable item, product packaging, food remnant, container, electronic item, or material visible in the photograph (e.g. "PET Plastic Water Bottle", "Organic Banana Peel", "Corrugated Cardboard Box", "Lithium-Ion AA Battery", "Aluminum Soda Can", "Multi-Layer Snack Chip Bag", "Glass Beverage Bottle", "Styrofoam Food Container", "Electronic Charging Cable", "Coffee Grounds & Filter").
-   - Even if the photo is taken on a table, desk, counter, floor, or held in a person's hand, focus specifically on the disposable/waste object itself (do NOT classify the table, room, or hand as the detectedItem).
-   - material: Physical composition (e.g. "Polyethylene Terephthalate (#1 PET)", "Organic Plant Biomass", "Cellulose Paperboard", "Aluminum Alloy").
+Analyze the uploaded image carefully and identify the main waste item visible in the image.
 
-2. WASTE CATEGORY (category & categoryLabel):
-   - category: MUST be exactly one of: 'recyclable', 'organic', 'ewaste', 'hazardous', 'general', 'context_dependent'.
-     * 'recyclable': Clean rigid plastics (#1 PET, #2 HDPE, #5 PP), clean paper, cardboard, glass containers, aluminum/steel cans.
-     * 'organic': Food remnants, peels, vegetable/fruit scraps, coffee grounds, garden clippings, 100% compostable items.
-     * 'ewaste': Electronics, cables, chargers, headphones, circuit boards, small electrical appliances.
-     * 'hazardous': Batteries, spray aerosol cans, paints, motor oil, toxic cleaners, fluorescent bulbs, medical sharps.
-     * 'general': Non-recyclable packaging, multi-layer foil pouches, food-greased napkins, composite items, styrofoam, landfill trash.
-     * 'context_dependent': Items requiring inspection (e.g. greasy pizza box: clean lid is recyclable, soiled base is compost or trash).
-   - categoryLabel: Clear title (e.g. 'Dry Recyclables / Plastics', 'Organic / Food & Compost', 'E-Waste / Electronics', 'Hazardous Collection', 'General Waste / Landfill').
+Your task is to classify the waste into one of these categories:
+1. Wet Waste
+2. Dry Waste
+3. Plastic
+4. Paper
+5. Glass
+6. Metal
+7. E-Waste
+8. Hazardous Waste
+9. Organic Waste
+10. Recyclable Waste
+11. Other/Unknown
 
-3. RECYCLABILITY (recyclability):
-   - Direct, authoritative assessment of recyclability status and requirements (e.g. "Highly Recyclable (100% Reprocessable through curbside collection)", "100% Biodegradable & Compostable", "Specialized E-Waste Drop-Off Required", "Hazardous Material - Do NOT Curbside Recycle", "Non-Recyclable Landfill Residual").
-
-4. DISPOSAL INSTRUCTIONS (disposalInstructions, binColor, whereToSegregate, segregationSteps):
-   - disposalInstructions: Direct, clear instructions on preparation and where to dispose of the item safely.
-   - binColor: Target bin (e.g. 'Blue Bin (Dry Recyclables)', 'Green Bin (Organic / Compost)', 'Yellow Bin (E-Waste & Electronics)', 'Red Bin (Hazardous Collection)', 'Black Bin (General Trash)').
-   - whereToSegregate: 1-2 direct sentences stating the target bin and disposal method.
-   - segregationSteps: Array of 3 to 4 sequential, actionable steps (e.g. ["1. Empty any residual liquid", "2. Rinse clean with cold water", "3. Flatten bottle to save space", "4. Deposit into Blue Bin with cap attached"]).
-
-5. CONFIDENCE SCORE (confidence & confidenceLevel):
-   - confidence: Integer 70-98 representing visual classification confidence.
-   - confidenceLevel: 'high' (>=85) or 'medium' (<85).
-
-6. ENVIRONMENTAL IMPACT (environmentalImpact & carbonSavedKg):
-   - environmentalImpact: Clear, educational explanation of the environmental benefits, circular resource conservation, and landfill diversion benefits of properly segregating this item.
-   - carbonSavedKg: Estimated kg CO2e greenhouse emissions prevented through correct diversion (e.g. 0.25).
-
-ADDITIONAL ENRICHMENTS:
-   - whyThisResult: Scientific rationale for categorization.
-   - ecoTip: Practical reduction or reuse tip.
-   - ecoActionScore: Integer 70-98.
-   - specialHandlingRequired: Boolean (true if batteries, electronics, chemicals, sharps, medical).
-   - specialHandlingNotes: Notes if special handling is needed, otherwise null.
-   - contaminationRisk: 'none', 'low', 'moderate', or 'high'.
-   - recyclingCode: SPI code (e.g. '#1 PET', '#2 HDPE', 'ALU 41', 'PAP 20') or null.
-   - alternativeUses: Array of 2 creative upcycling or repurposing ideas.
+IMPORTANT RULES:
+- Look at the actual image and identify the physical object.
+- Do not assume the waste category without visual evidence.
+- If multiple waste items are visible, identify the most important/main item and mention other visible items if relevant.
+- If the image is unclear, blurry, too dark, or does not contain waste, say that clearly.
+- Do not make up information.
+- Give a confidence score from 0 to 100.
+- Explain briefly why you selected the category.
+- Tell the user which bin/container should be used.
+- Give simple disposal instructions.
+- If the item is recyclable, mention whether it should be cleaned/rinsed before recycling.
+- If the item is e-waste or hazardous waste, warn the user not to throw it into normal household waste.
+- Keep the answer simple and easy for a normal user to understand.
 
 ${hint ? `User provided clarification / hint: "${hint}". Use this context to assist visual identification.` : ""}
 ${sampleId ? `Item reference: "${sampleId}".` : ""}
 
-Respond ONLY with valid JSON with keys:
-"detectedItem", "material", "category", "categoryLabel", "recyclability", "disposalInstructions", "binColor", "whereToSegregate", "segregationSteps", "confidence", "confidenceLevel", "environmentalImpact", "carbonSavedKg", "whyThisResult", "ecoTip", "ecoActionScore", "specialHandlingRequired", "specialHandlingNotes", "contaminationRisk", "recyclingCode", "alternativeUses"`;
+Return ONLY valid JSON in this exact structure:
+{
+  "detected_item": "name of the waste item",
+  "category": "one category from the list",
+  "material": "main material",
+  "confidence": 0,
+  "bin": "recommended bin",
+  "recyclable": true,
+  "reason": "short explanation based on the image",
+  "disposal_instruction": "simple disposal instruction",
+  "sustainability_tip": "one short useful environmental tip"
+}`;
 
-    const systemInstruction = `You are EcoSort AI, a specialist multimodal waste classification and segregation vision model.
-Analyze the provided photograph carefully to determine and return all 6 core metrics:
-1. Waste item name
-2. Waste category
-3. Recyclability
-4. Disposal instructions
-5. Confidence score
-6. Environmental impact
-Base your analysis on the actual pixel data of this submission.`;
+    const systemInstruction = `You are an AI-powered Waste Classification Assistant called EcoSort AI.
+Analyze the uploaded image carefully and identify the main waste item visible in the image.
+Classify the waste into one of these exact 11 categories:
+1. Wet Waste
+2. Dry Waste
+3. Plastic
+4. Paper
+5. Glass
+6. Metal
+7. E-Waste
+8. Hazardous Waste
+9. Organic Waste
+10. Recyclable Waste
+11. Other/Unknown
+
+Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, simple disposal instructions, recyclable rinsing advice if applicable, and hazardous/e-waste safety warnings. Respond strictly in the specified JSON structure.`;
 
     console.log("─── STEP 2: SPECIFIC PAYLOAD TRANSMITTED TO GEMINI API ───");
     console.log("Request Freshness Token:", {
@@ -626,84 +769,139 @@ Base your analysis on the actual pixel data of this submission.`;
     console.log("─── STEP 4: PARSED JSON MODEL OUTPUT ───");
     console.log("Parsed JSON Object:\n", JSON.stringify(parsed, null, 2));
 
-    // Normalize category and binColor
-    const category = (parsed.category || "recyclable").toLowerCase();
-    let binColor = parsed.binColor;
-    if (!binColor) {
-      if (category === "organic") binColor = "Green Bin (Organic / Compost)";
-      else if (category === "recyclable") binColor = "Blue Bin (Dry Recyclables)";
-      else if (category === "ewaste") binColor = "Yellow Bin (E-Waste & Electronics)";
-      else if (category === "hazardous") binColor = "Red Bin (Hazardous Drop-Off)";
-      else if (category === "general") binColor = "Black/Grey Bin (General Trash / Landfill)";
-      else binColor = "Check Bin Markings / Local Drop-Off";
+    // Support both the exact EcoSort AI schema (snake_case) and enriched keys
+    const rawCategory = String(parsed.category || "Recyclable Waste").trim();
+    const detectedItemName = parsed.detected_item || parsed.detectedItem || "Identified Waste Item";
+    const materialType = parsed.material || "Recoverable Material";
+    const rawBin = parsed.bin || parsed.binColor;
+    const rawConfidence = typeof parsed.confidence === "number" ? parsed.confidence : 90;
+    const isRecyclableBool = typeof parsed.recyclable === "boolean" ? parsed.recyclable : (rawCategory.toLowerCase().includes("recyclable") || rawCategory.toLowerCase().includes("plastic") || rawCategory.toLowerCase().includes("paper") || rawCategory.toLowerCase().includes("glass") || rawCategory.toLowerCase().includes("metal"));
+    const disposalInstruction = parsed.disposal_instruction || parsed.disposalInstructions || "Deposit into the recommended waste container.";
+    const reasoning = parsed.reason || parsed.whyThisResult || "Identified based on visual surface texture and material composition.";
+    const sustainabilityTip = parsed.sustainability_tip || parsed.ecoTip || "Diverting this item from landfills reduces greenhouse gas emissions.";
+
+    // Map 11 categories to app stream categories:
+    // 1. Wet Waste, 2. Dry Waste, 3. Plastic, 4. Paper, 5. Glass, 6. Metal, 7. E-Waste, 8. Hazardous Waste, 9. Organic Waste, 10. Recyclable Waste, 11. Other/Unknown
+    const catLower = rawCategory.toLowerCase();
+    let normalizedCategory: "recyclable" | "organic" | "ewaste" | "hazardous" | "general" | "context_dependent" = "recyclable";
+    let categoryLabel = rawCategory;
+
+    if (catLower.includes("wet") || catLower.includes("organic")) {
+      normalizedCategory = "organic";
+      categoryLabel = catLower.includes("wet") ? "Wet Waste" : "Organic Waste";
+    } else if (catLower.includes("e-waste") || catLower.includes("electronic")) {
+      normalizedCategory = "ewaste";
+      categoryLabel = "E-Waste";
+    } else if (catLower.includes("hazard")) {
+      normalizedCategory = "hazardous";
+      categoryLabel = "Hazardous Waste";
+    } else if (catLower.includes("plastic")) {
+      normalizedCategory = "recyclable";
+      categoryLabel = "Plastic";
+    } else if (catLower.includes("paper")) {
+      normalizedCategory = "recyclable";
+      categoryLabel = "Paper";
+    } else if (catLower.includes("glass")) {
+      normalizedCategory = "recyclable";
+      categoryLabel = "Glass";
+    } else if (catLower.includes("metal")) {
+      normalizedCategory = "recyclable";
+      categoryLabel = "Metal";
+    } else if (catLower.includes("dry")) {
+      normalizedCategory = "recyclable";
+      categoryLabel = "Dry Waste";
+    } else if (catLower.includes("recyclable")) {
+      normalizedCategory = "recyclable";
+      categoryLabel = "Recyclable Waste";
+    } else if (catLower.includes("other") || catLower.includes("unknown") || catLower.includes("landfill") || catLower.includes("trash")) {
+      normalizedCategory = "general";
+      categoryLabel = "Other/Unknown";
     }
 
-    let whereToSegregate = parsed.whereToSegregate;
-    if (!whereToSegregate) {
-      whereToSegregate = `Deposit into ${binColor} following standard preparation instructions.`;
+    let binColor = rawBin;
+    if (!binColor) {
+      if (normalizedCategory === "organic") binColor = "Green Bin (Wet / Organic Compost)";
+      else if (normalizedCategory === "recyclable") binColor = "Blue Bin (Dry Recyclables)";
+      else if (normalizedCategory === "ewaste") binColor = "Yellow Bin (Specialized E-Waste Drop-Off)";
+      else if (normalizedCategory === "hazardous") binColor = "Red Bin (Hazardous Material Depot)";
+      else binColor = "Black/Grey Bin (General Waste / Landfill)";
     }
+
+    const isSpecial = normalizedCategory === "ewaste" || normalizedCategory === "hazardous";
+
+    // Recyclability label
+    const recyclabilityText = parsed.recyclability || (
+      isRecyclableBool
+        ? (disposalInstruction.toLowerCase().includes("rinse") || disposalInstruction.toLowerCase().includes("clean")
+            ? "100% Recyclable (Rinse/clean before recycling)"
+            : "Recyclable")
+        : (isSpecial ? "Specialized Collection Required (Do NOT put in household waste)" : "Non-Recyclable Landfill Residual")
+    );
 
     let segregationSteps = Array.isArray(parsed.segregationSteps) && parsed.segregationSteps.length > 0
       ? parsed.segregationSteps
       : [
-          `1. Empty any liquid or organic residue from the item.`,
-          `2. Inspect material components and detach non-compatible lids or tags.`,
-          `3. Place into ${binColor}.`,
-          `4. Keep dry and uncontaminated to preserve recyclable quality.`
+          `1. Inspect: ${reasoning}`,
+          `2. Prepare: ${disposalInstruction}`,
+          `3. Segregate: Deposit into ${binColor}.`,
+          `4. Action: ${sustainabilityTip}`
         ];
 
     const uniqueId = `scan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     
-    // Default recyclability descriptor based on category if not directly output
-    const defaultRecyclability =
-      category === "recyclable"
-        ? "Highly Recyclable (Standard curbside collection)"
-        : category === "organic"
-        ? "100% Biodegradable & Compostable"
-        : category === "ewaste"
-        ? "Specialized E-Waste Drop-Off Required"
-        : category === "hazardous"
-        ? "Hazardous Chemical Disposal Required"
-        : "Non-Recyclable Residual Waste";
+    const carbonSavedVal = typeof parsed.carbonSavedKg === "number"
+      ? parsed.carbonSavedKg
+      : (normalizedCategory === "recyclable" ? 0.28 : normalizedCategory === "organic" ? 0.22 : normalizedCategory === "ewaste" ? 0.50 : 0.10);
 
     const defaultEnvironmentalImpact =
-      category === "recyclable"
-        ? `Recycling this item conserves virgin materials and prevents approx. ${parsed.carbonSavedKg || 0.25} kg of CO2e greenhouse gas emissions.`
-        : category === "organic"
-        ? `Composting organic waste prevents methane emissions in landfills and enriches soil, avoiding approx. ${parsed.carbonSavedKg || 0.2} kg CO2e.`
-        : category === "ewaste"
-        ? `Proper electronic recycling recovers rare metals and prevents toxic leaching, avoiding approx. ${parsed.carbonSavedKg || 0.45} kg CO2e.`
-        : category === "hazardous"
-        ? `Certified hazardous disposal protects soil and groundwater ecosystems from volatile heavy metals and toxic chemicals.`
-        : `Responsible landfill disposal prevents loose environmental litter and protects municipal stormwater systems.`;
+      normalizedCategory === "recyclable"
+        ? `Recycling this item conserves virgin materials and avoids approx. ${carbonSavedVal} kg of CO2e greenhouse gas emissions.`
+        : normalizedCategory === "organic"
+        ? `Composting wet organic waste prevents methane emissions in landfills and enriches soil, avoiding approx. ${carbonSavedVal} kg CO2e.`
+        : normalizedCategory === "ewaste"
+        ? `Specialized electronic recycling recovers valuable metals and prevents toxic environmental leaching, avoiding approx. ${carbonSavedVal} kg CO2e.`
+        : normalizedCategory === "hazardous"
+        ? `Certified hazardous collection prevents contamination of waterways and municipal soil ecosystems.`
+        : `Responsible landfill disposal prevents loose environmental litter and protects municipal drainage systems.`;
 
     const result = {
-      detectedItem: parsed.detectedItem || "Identified Waste Item",
-      material: parsed.material || "Recoverable Material",
-      category: category,
-      categoryLabel: parsed.categoryLabel || `${category.charAt(0).toUpperCase() + category.slice(1)} Stream`,
-      recyclability: parsed.recyclability || defaultRecyclability,
-      disposalInstructions: parsed.disposalInstructions || whereToSegregate,
+      detectedItem: detectedItemName,
+      material: materialType,
+      category: normalizedCategory,
+      categoryLabel: categoryLabel,
+      recyclability: recyclabilityText,
+      disposalInstructions: disposalInstruction,
       binColor: binColor,
-      whereToSegregate: whereToSegregate,
+      whereToSegregate: `Deposit into ${binColor}. ${disposalInstruction}`,
       segregationSteps: segregationSteps,
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 90,
-      confidenceLevel: parsed.confidenceLevel || (parsed.confidence >= 85 ? "high" : "medium"),
+      confidence: rawConfidence,
+      confidenceLevel: rawConfidence >= 85 ? ("high" as const) : ("medium" as const),
       environmentalImpact: parsed.environmentalImpact || defaultEnvironmentalImpact,
-      recommendedDisposal: parsed.recommendedDisposal || parsed.disposalInstructions || whereToSegregate,
-      whyThisResult: parsed.whyThisResult || "Categorized based on physical material composition and circular recovery feasibility.",
-      ecoTip: parsed.ecoTip || "Diverting this item from landfills reduces greenhouse gas emissions and conserves virgin resources.",
-      ecoActionScore: typeof parsed.ecoActionScore === "number" ? parsed.ecoActionScore : 88,
-      specialHandlingRequired: Boolean(parsed.specialHandlingRequired),
-      specialHandlingNotes: parsed.specialHandlingNotes || undefined,
-      contaminationRisk: parsed.contaminationRisk || "low",
+      recommendedDisposal: disposalInstruction,
+      whyThisResult: reasoning,
+      ecoTip: sustainabilityTip,
+      ecoActionScore: typeof parsed.ecoActionScore === "number" ? parsed.ecoActionScore : Math.min(98, Math.max(70, rawConfidence)),
+      specialHandlingRequired: isSpecial || Boolean(parsed.specialHandlingRequired),
+      specialHandlingNotes: isSpecial ? "Warning: Do not discard into normal household trash or curbside bins." : undefined,
+      contaminationRisk: parsed.contaminationRisk || (isRecyclableBool ? "low" : "none"),
       recyclingCode: parsed.recyclingCode || undefined,
-      alternativeUses: Array.isArray(parsed.alternativeUses) ? parsed.alternativeUses : ["Upcycling", "Repurposing"],
-      carbonSavedKg: typeof parsed.carbonSavedKg === "number" ? parsed.carbonSavedKg : 0.25,
+      alternativeUses: Array.isArray(parsed.alternativeUses) ? parsed.alternativeUses : ["Repurposing", "Reusing"],
+      carbonSavedKg: carbonSavedVal,
       imageUrl: imageBase64,
       id: uniqueId,
       timestamp: new Date().toISOString(),
       isMock: false,
+      rawJson: {
+        detected_item: detectedItemName,
+        category: categoryLabel,
+        material: materialType,
+        confidence: rawConfidence,
+        bin: binColor,
+        recyclable: isRecyclableBool,
+        reason: reasoning,
+        disposal_instruction: disposalInstruction,
+        sustainability_tip: sustainabilityTip
+      }
     };
 
     const durationMs = Date.now() - startTime;
@@ -746,6 +944,69 @@ Base your analysis on the actual pixel data of this submission.`;
         : "Live AI model temporarily busy. Provided smart localized segregation guidance.",
     });
   }
+});
+
+// API: Check local Python FastAPI Machine Learning Microservice Health
+app.get(["/api/ml/status", "/ml/status"], async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(`${ML_SERVICE_URL}/health`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      res.json({
+        available: false,
+        url: ML_SERVICE_URL,
+        error: `Service responded with HTTP ${response.status}`,
+      });
+      return;
+    }
+    const data = await response.json();
+    res.json({
+      available: true,
+      url: ML_SERVICE_URL,
+      ...data,
+    });
+  } catch (err: any) {
+    res.json({
+      available: false,
+      url: ML_SERVICE_URL,
+      error: "ML service is offline. Run 'uvicorn api:app --port 8000' in the ml-model/ directory to start.",
+    });
+  }
+});
+
+// API: Direct classification via local Python FastAPI ML service
+app.post(["/api/ml/classify", "/ml/classify"], async (req: Request, res: Response): Promise<void> => {
+  const { imageBase64, threshold = 60.0 } = req.body;
+  if (!imageBase64) {
+    res.status(400).json({ success: false, error: "imageBase64 is required" });
+    return;
+  }
+
+  let cleanBase64 = String(imageBase64);
+  if (cleanBase64.includes(",")) {
+    cleanBase64 = cleanBase64.split(",")[1];
+  }
+  cleanBase64 = cleanBase64.replace(/\s+/g, "");
+
+  const mlData = await queryPythonMlService(cleanBase64, threshold);
+  if (!mlData || mlData.error) {
+    res.status(503).json({
+      success: false,
+      error: "Local ML service is not reachable or model is not loaded.",
+      mlServiceUrl: ML_SERVICE_URL,
+    });
+    return;
+  }
+
+  const result = formatMlResultToWasteAnalysis(mlData, imageBase64);
+  res.json({
+    success: true,
+    result,
+    engine: "mobilenet_v3_local",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // API: AI Chat with RAG Knowledge Base - supports both /api/chat and /chat

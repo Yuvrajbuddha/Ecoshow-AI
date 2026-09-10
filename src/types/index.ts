@@ -35,6 +35,18 @@ export interface WasteAnalysisResult {
   timestamp: string;
   imageUrl?: string;
   isMock?: boolean;
+  rawCategory?: string;
+  rawJson?: {
+    detected_item: string;
+    category: string;
+    material: string;
+    confidence: number;
+    bin: string;
+    recyclable: boolean;
+    reason: string;
+    disposal_instruction: string;
+    sustainability_tip: string;
+  };
 }
 
 export interface DisposalCenter {

@@ -1,0 +1,79 @@
+==============================================================================
+ECO-SORT AI: OFFICIAL WASTE CLASSIFICATION DATASET AUDIT & REPORT
+==============================================================================
+
+1. DATASET OVERVIEW & REPRODUCIBILITY
+--------------------------------------------------
+• Dataset Name:          EcoSort AI Waste Classification Dataset
+• Target Classes:         9 distinct classes
+• Total Images Scanned:   3750
+• Valid Clean Images:     3722
+• Corrupted/Invalid:      20
+• Exact Duplicates:       8
+• Stratified Split Seed:  42 (deterministic 70% / 15% / 15%)
+• Training Set:           2602 images (70%)
+• Validation Set:         555 images (15%)
+• Test Set:               565 images (15%)
+
+2. FINAL CLASS DISTRIBUTION & CLASS WEIGHTS
+--------------------------------------------------
+Class          | Total  | Train  | Val   | Test  | Pct %  | Class Weight
+----------------------------------------------------------------------
+plastic        | 482    | 337    | 72    | 73    |  13.0% | 0.8580      
+paper          | 594    | 415    | 89    | 90    |  16.0% | 0.6962      
+cardboard      | 403    | 282    | 60    | 61    |  10.8% | 1.0262      
+glass          | 499    | 349    | 74    | 76    |  13.4% | 0.8288      
+metal          | 409    | 286    | 61    | 62    |  11.0% | 1.0111      
+organic        | 482    | 337    | 72    | 73    |  13.0% | 0.8580      
+e_waste        | 205    | 143    | 30    | 32    |   5.5% | 2.0173      
+hazardous      | 428    | 299    | 64    | 65    |  11.5% | 0.9663      
+other          | 220    | 154    | 33    | 33    |   5.9% | 1.8798      
+----------------------------------------------------------------------
+TOTAL          | 3722   | 2602   | 555   | 565   | 100.0% |
+
+3. PROVENANCE OF REAL PUBLIC DATASETS
+--------------------------------------------------
+• Source Name:    TrashNet
+  Organization:   Stanford University (Gary Thung, Mindy Yang)
+  Official URL:   https://github.com/garythung/trashnet
+  License:        Open Academic Use (MIT-equivalent research distribution)
+  Class Mappings: {'glass': 'glass', 'paper': 'paper', 'cardboard': 'cardboard', 'plastic': 'plastic', 'metal': 'metal', 'trash': 'other'}
+
+• Source Name:    RealWaste
+  Organization:   University of Wollongong / Whyte's Gully Waste Facility (Single et al.)
+  Official URL:   https://github.com/sam-single/realwaste
+  License:        Creative Commons Attribution 4.0 International (CC BY 4.0)
+  Class Mappings: {'Food Organics': 'organic', 'Vegetation': 'organic', 'Miscellaneous Trash': 'other', 'Textile Trash': 'other'}
+
+• Source Name:    TrashBox
+  Organization:   IEEE FRUCT / University of Helsinki & IIIT Sri City (Kumsetty et al.)
+  Official URL:   https://github.com/nikhilvenkatkumsetty/TrashBox
+  License:        Open Source Research License (CC BY-NC-SA 4.0 / Academic Use)
+  Class Mappings: {'e-waste/electrical cables': 'e_waste', 'e-waste/electronic chips': 'e_waste', 'medical/syringe': 'hazardous', 'medical/medicines': 'hazardous'}
+
+• Source Name:    Singapore Battery Dataset
+  Organization:   National University of Singapore / BatSort (Friedrich Zhao et al.)
+  Official URL:   https://github.com/FriedrichZhao/Singapore_Battery_Dataset
+  License:        MIT License
+  Class Mappings: {'Duracell_Alk, Energizer, IKEA, GP, Klarus': 'hazardous'}
+
+4. QUALITY AUDIT FINDINGS
+--------------------------------------------------
+• Corrupted files removed/quarantined: 20
+• Duplicate files removed:              8
+• Cross-class leakage protection:      Verified (Train/Val/Test split performed AFTER deduplication)
+• File integrity check:                100% of remaining images verified with valid JPEG/PNG headers
+
+5. REAL-WORLD DATA GAP ANALYSIS & COLLECTION RECOMMENDATIONS
+--------------------------------------------------
+While the current dataset provides a robust academic benchmark, real-world deployment
+requires covering practical edge cases. Recommended next collection targets:
+• Plastic:   Crushed transparent PET water bottles, opaque shampoo bottles, coloured caps, dirty plastic bags.
+• Paper:     Creased receipts, oil-stained cardboard boxes (which should classify as organic or other).
+• Glass:     Broken bottle shards, coloured glass (amber, emerald green), laboratory vials.
+• Metal:     Crushed soda cans, rusty tins, bottle crowns, aluminum takeout foil trays.
+• Organic:   Mouldy leftovers, coffee grounds, eggshells, tea bags, wet food scraps.
+• E-Waste:   Swollen lithium batteries, frayed charging cables, discarded earbuds, computer RAM.
+• Hazardous: Aerosol spray paint cans, mercury thermometers, expired blister packs, chemical bleach containers.
+• Other:     Ceramic mugs, rubber bands, composite chip bags (metallized plastic), cigarette butts.
+==============================================================================

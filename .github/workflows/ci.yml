@@ -1,0 +1,51 @@
+name: CI - Build & Lint
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  web-app:
+    name: Web Application (Vite & TypeScript)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript Typecheck & Lint
+        run: npm run lint
+
+      - name: Production Build
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+  ml-pipeline:
+    name: Machine Learning Pipeline Syntax & Integrity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Syntax check Python ML scripts
+        run: |
+          python -m py_compile ml-model/*.py
+          echo "All Python ML scripts compiled cleanly."
