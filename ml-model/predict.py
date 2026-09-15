@@ -53,15 +53,19 @@ class WastePredictor:
         """Loads trained Keras model and calibration settings."""
         if not self.model_path.exists():
             raise FileNotFoundError(
-                f"Trained model not found at {self.model_path}. Run train.py first."
+                f"[ML] ❌ Trained model not found at '{self.model_path}'.\n"
+                f"     Please train the model first by running:\n"
+                f"     python train.py"
             )
 
         try:
             import tensorflow as tf
             from tensorflow import keras
+            print(f"[ML] Loading model from {self.model_path}...")
             self.model = keras.models.load_model(str(self.model_path))
+            print("[ML] ✅ Model loaded successfully.")
         except Exception as e:
-            raise RuntimeError(f"Failed to load Keras model: {e}")
+            raise RuntimeError(f"[ML] Failed to load Keras model: {e}")
 
         if CALIBRATION_FILE.exists():
             try:
@@ -82,6 +86,8 @@ class WastePredictor:
         """
         threshold = custom_threshold if custom_threshold is not None else self.conf_threshold
 
+        print(f"[ML] Image received: {image_source}")
+        print(f"[ML] Preprocessing image to canonical {DEFAULT_TARGET_SIZE}...")
         # Canonical preprocessing
         img_arr = load_and_preprocess_image(
             image_source,
@@ -91,6 +97,7 @@ class WastePredictor:
         batch = np.expand_dims(img_arr, axis=0)
 
         # Raw model softmax prediction
+        print("[ML] Running prediction...")
         raw_probs = self.model.predict(batch, verbose=0)[0]
 
         # Temperature scaling
@@ -101,6 +108,9 @@ class WastePredictor:
         pred_idx = int(np.argmax(calibrated_probs))
         confidence = float(np.max(calibrated_probs) * 100.0)
         predicted_category = CANONICAL_CLASSES[pred_idx]
+
+        print(f"[ML] Predicted class: {predicted_category.capitalize()}")
+        print(f"[ML] Confidence: {confidence:.2f}%")
 
         # Confidence Threshold Fallback
         if confidence < threshold:

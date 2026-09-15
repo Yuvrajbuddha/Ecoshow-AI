@@ -1,65 +1,111 @@
 {
-  "total_images": 0,
+  "total_images": 2890,
   "images_per_class": {
-    "plastic": 0,
-    "paper": 0,
-    "cardboard": 0,
-    "glass": 0,
-    "metal": 0,
-    "organic": 0,
-    "e_waste": 0,
-    "hazardous": 0,
-    "other": 0
+    "plastic": 482,
+    "paper": 594,
+    "cardboard": 403,
+    "glass": 499,
+    "metal": 409,
+    "organic": 202,
+    "e_waste": 93,
+    "hazardous": 68,
+    "other": 140
   },
   "class_imbalance": {
     "plastic": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 482,
+      "percentage": 16.68,
+      "effective_class_weight": 0.6662
     },
     "paper": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 594,
+      "percentage": 20.55,
+      "effective_class_weight": 0.5406
     },
     "cardboard": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 403,
+      "percentage": 13.94,
+      "effective_class_weight": 0.7968
     },
     "glass": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 499,
+      "percentage": 17.27,
+      "effective_class_weight": 0.6435
     },
     "metal": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 409,
+      "percentage": 14.15,
+      "effective_class_weight": 0.7851
     },
     "organic": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 202,
+      "percentage": 6.99,
+      "effective_class_weight": 1.5897
     },
     "e_waste": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 93,
+      "percentage": 3.22,
+      "effective_class_weight": 3.4528
     },
     "hazardous": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 68,
+      "percentage": 2.35,
+      "effective_class_weight": 4.7222
     },
     "other": {
-      "count": 0,
-      "percentage": 0.0,
-      "effective_class_weight": 1.0
+      "count": 140,
+      "percentage": 4.84,
+      "effective_class_weight": 2.2937
     }
   },
   "invalid_images": [],
-  "duplicates": [],
+  "duplicates": [
+    {
+      "duplicate": "glass/trashnet_glass176.jpg",
+      "identical_to": "plastic/trashnet_plastic152.jpg",
+      "sha256": "c41b99aec8a3257c8668a2144ebbaf8042018f0a85d88e22bf4e413b43693dd8"
+    },
+    {
+      "duplicate": "glass/trashnet_glass389.jpg",
+      "identical_to": "plastic/trashnet_plastic332.jpg",
+      "sha256": "e971f4f8f50e960e454ea724cec922fc2988bbf4027aa48b553e139bb5890968"
+    },
+    {
+      "duplicate": "metal/trashnet_metal91.jpg",
+      "identical_to": "glass/trashnet_glass115.jpg",
+      "sha256": "81546d1362d75fc60718e5852593c58f66f813e8c1e9d1eae6871fedb02e2868"
+    },
+    {
+      "duplicate": "organic/realwaste_veg_15.jpg",
+      "identical_to": "organic/realwaste_vegetation_15.jpg",
+      "sha256": "386f010625c6864520c01ad20d8044d3106ca006e55126bb30df3b62c68983f9"
+    },
+    {
+      "duplicate": "organic/realwaste_veg_49.jpg",
+      "identical_to": "organic/realwaste_vegetation_49.jpg",
+      "sha256": "86e078c6a730e0672477836a156b593f0041c95a28f62be7e498fb1cd30bdaa5"
+    },
+    {
+      "duplicate": "organic/realwaste_veg_50.jpg",
+      "identical_to": "organic/realwaste_vegetation_50.jpg",
+      "sha256": "73b25bd60dab99c94d04186009a148bb47b51c359956f1b0f5ab611b9b61d5a4"
+    },
+    {
+      "duplicate": "organic/realwaste_veg_54.jpg",
+      "identical_to": "organic/realwaste_vegetation_54.jpg",
+      "sha256": "5f36945424027c2637edd3440b7b94c63bdb7bfc6df2f710bd64443c2ff5eaf2"
+    },
+    {
+      "duplicate": "organic/realwaste_veg_67.jpg",
+      "identical_to": "organic/realwaste_vegetation_67.jpg",
+      "sha256": "8674433752b965d9d95ab76f429b3946becc31f8cbae6893b89e0a4ab6550ade"
+    },
+    {
+      "duplicate": "e_waste/tb_cables_electrical_cables 135.jpg",
+      "identical_to": "e_waste/trashbox_cable_135.jpg",
+      "sha256": "70456a42edbc6e941a1b817cb8fc29d16719fd152afae74e17f6ed181263f3e0"
+    }
+  ],
   "near_duplicates": [],
   "image_quality_statistics": {
     "blurry_images_count": 0,
@@ -67,14 +113,20 @@
     "extremely_overexposed_count": 0,
     "abnormal_aspect_ratio_count": 0,
     "resolutions": {
-      "min_width": 0,
-      "max_width": 0,
-      "min_height": 0,
-      "max_height": 0,
-      "mean_width": 0.0,
-      "mean_height": 0.0
+      "min_width": 67,
+      "max_width": 4752,
+      "min_height": 135,
+      "max_height": 4032,
+      "mean_width": 533.9,
+      "mean_height": 413.4,
+      "median_width": 512,
+      "median_height": 384
     },
-    "file_formats": {}
+    "file_formats": {
+      ".jpg": 2885,
+      ".jpeg": 10,
+      ".png": 4
+    }
   },
   "recommendations": []
 }

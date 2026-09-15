@@ -500,8 +500,8 @@ function formatMlResultToWasteAnalysis(mlData: any, imageBase64: string): any {
   };
 }
 
-// API: Analyze Waste Image (Multimodal Vision) - supports both /api/analyze-waste and /analyze-waste
-app.post(["/api/analyze-waste", "/analyze-waste"], async (req: Request, res: Response): Promise<void> => {
+// API: Analyze Waste Image (Multimodal Vision) - supports /api/analyze-waste, /api/classify, and root aliases
+app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"], async (req: Request, res: Response): Promise<void> => {
   const serverTime = new Date().toISOString();
   const clientSessionId = (req.headers["x-session-id"] as string) || req.body?.sessionId || req.body?.session_id || `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   const clientReqId = (req.headers["x-client-request-id"] as string) || req.body?.requestId || `scan-req-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -591,38 +591,26 @@ app.post(["/api/analyze-waste", "/analyze-waste"], async (req: Request, res: Res
       }
     }
 
-    // Only return mock fixture if explicitly requested for a sample item AND forced, or if no image was provided
-    if ((forceMock && sampleId) || !ai || !cleanBase64 || cleanBase64.length < 20) {
-      console.warn("⚠️ Triggered Early Fallback Condition:");
-      if (!ai) console.warn("   -> Reason: Gemini API client is not initialized (missing API key)");
-      else if (forceMock && sampleId) console.warn(`   -> Reason: Sample fixture "${sampleId}" requested with forceMock=true`);
-      else if (!cleanBase64 || cleanBase64.length < 20) console.warn(`   -> Reason: Image base64 data is empty or too short (${cleanBase64.length} chars)`);
+    // If no image base64 data was provided and this is not an explicit sample fixture test, return clear HTTP 400
+    if ((!cleanBase64 || cleanBase64.length < 20) && !(forceMock && sampleId)) {
+      console.warn("❌ Rejected: No image uploaded (base64 is empty or too short).");
+      console.groupEnd();
+      res.status(400).json({
+        success: false,
+        error: "No image uploaded. Please capture or upload a valid waste photograph.",
+        detail: "imageBase64 payload is missing or empty.",
+        requestId: clientReqId,
+        sessionId: clientSessionId,
+        timestamp: clientTimestamp,
+      });
+      return;
+    }
 
-      // If Gemini client is not initialized, automatically check if local Python ML model service is running
-      if (!ai && cleanBase64 && cleanBase64.length >= 20) {
-        console.log("🔍 Checking local Python FastAPI ML service as primary engine...");
-        const mlResult = await queryPythonMlService(cleanBase64);
-        if (mlResult && !mlResult.error && mlResult.category) {
-          console.log("✅ Successfully classified via local MobileNetV3 ML model:", mlResult.category);
-          const formatted = formatMlResultToWasteAnalysis(mlResult, imageBase64);
-          console.groupEnd();
-          res.json({
-            success: true,
-            result: formatted,
-            isDemoMode: false,
-            engine: "mobilenet_v3_local",
-            requestId: clientReqId,
-            sessionId: clientSessionId,
-            session_id: clientSessionId,
-            timestamp: clientTimestamp,
-            salt: clientSalt,
-          });
-          return;
-        }
-      }
-
+    // Only return mock fixture if explicitly requested for a sample item AND forced
+    if (forceMock && sampleId) {
+      console.warn("⚠️ Triggered Sample Fixture Condition (forceMock=true, sampleId=" + sampleId + ")");
       const result = getFallbackAnalysis(hint, sampleId, imageBase64);
-      console.log("Early Fallback Result Generated:\n", JSON.stringify(result, null, 2));
+      console.log("Sample Fixture Result Generated:\n", JSON.stringify(result, null, 2));
       console.groupEnd();
       res.json({
         success: true,
@@ -633,6 +621,40 @@ app.post(["/api/analyze-waste", "/analyze-waste"], async (req: Request, res: Res
         session_id: clientSessionId,
         timestamp: clientTimestamp,
         salt: clientSalt,
+      });
+      return;
+    }
+
+    // If Gemini client is not initialized, check local Python ML model service as primary engine
+    if (!ai) {
+      console.warn("⚠️ Gemini API client is not initialized (missing API key). Checking local ML microservice...");
+      const mlResult = await queryPythonMlService(cleanBase64);
+      if (mlResult && !mlResult.error && mlResult.category) {
+        console.log("✅ Successfully classified via local MobileNetV3 ML model:", mlResult.category);
+        const formatted = formatMlResultToWasteAnalysis(mlResult, imageBase64);
+        console.groupEnd();
+        res.json({
+          success: true,
+          result: formatted,
+          isDemoMode: false,
+          engine: "mobilenet_v3_local",
+          requestId: clientReqId,
+          sessionId: clientSessionId,
+          session_id: clientSessionId,
+          timestamp: clientTimestamp,
+          salt: clientSalt,
+        });
+        return;
+      }
+
+      console.warn("⚠️ Neither Gemini nor local ML microservice could process the image.");
+      console.groupEnd();
+      res.status(503).json({
+        success: false,
+        error: "AI classification service is unavailable. Please ensure GEMINI_API_KEY is configured or the local Python ML service is running at http://127.0.0.1:8000.",
+        requestId: clientReqId,
+        sessionId: clientSessionId,
+        timestamp: clientTimestamp,
       });
       return;
     }

@@ -250,13 +250,31 @@ def evaluate_real_world():
         status = "✅ Routed to Other/Unknown" if item["routed_to_unknown"] else "⚠️ Overconfidently Assigned"
         print(f"  • {item['item'].ljust(15)}: Raw {item['raw_prediction']} ({item['confidence']}%) -> {status}")
 
-    return {
+    summary = {
         "dataset_test_accuracy": round(dataset_test_acc, 2),
         "real_world_smartphone_accuracy": round(phone_acc, 2),
         "ood_rejection_rate": round(ood_rejection_rate, 2),
         "confidence_threshold": conf_threshold,
+        "per_class_smartphone_accuracy": {
+            c: {
+                "accuracy": round((phone_results_by_class[c]["correct"] / phone_results_by_class[c]["total"] * 100.0) if phone_results_by_class[c]["total"] > 0 else 0.0, 2),
+                "correct": phone_results_by_class[c]["correct"],
+                "total": phone_results_by_class[c]["total"],
+            }
+            for c in CANONICAL_CLASSES
+        },
         "ood_details": ood_details
     }
+
+    report_path = BASE_DIR / "real_world_report.json"
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        print(f"\n✅ Exported real-world test report to: {report_path}")
+    except Exception as e:
+        print(f"Warning: could not save {report_path}: {e}")
+
+    return summary
 
 
 if __name__ == "__main__":

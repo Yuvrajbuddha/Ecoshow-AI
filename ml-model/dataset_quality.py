@@ -321,16 +321,31 @@ def inspect_dataset(
 
     # Resolution statistics
     if all_widths and all_heights:
-        report["image_quality_statistics"]["resolutions"] = {
-            "min_width": int(np.min(all_widths)),
-            "max_width": int(np.max(all_widths)),
-            "min_height": int(np.min(all_heights)),
-            "max_height": int(np.max(all_heights)),
-            "mean_width": round(float(np.mean(all_widths)), 1),
-            "mean_height": round(float(np.mean(all_heights)), 1),
-            "median_width": int(np.median(all_widths)),
-            "median_height": int(np.median(all_heights)),
-        }
+        if np is not None:
+            report["image_quality_statistics"]["resolutions"] = {
+                "min_width": int(np.min(all_widths)),
+                "max_width": int(np.max(all_widths)),
+                "min_height": int(np.min(all_heights)),
+                "max_height": int(np.max(all_heights)),
+                "mean_width": round(float(np.mean(all_widths)), 1),
+                "mean_height": round(float(np.mean(all_heights)), 1),
+                "median_width": int(np.median(all_widths)),
+                "median_height": int(np.median(all_heights)),
+            }
+        else:
+            sorted_w = sorted(all_widths)
+            sorted_h = sorted(all_heights)
+            mid = len(sorted_w) // 2
+            report["image_quality_statistics"]["resolutions"] = {
+                "min_width": int(min(all_widths)),
+                "max_width": int(max(all_widths)),
+                "min_height": int(min(all_heights)),
+                "max_height": int(max(all_heights)),
+                "mean_width": round(sum(all_widths) / len(all_widths), 1),
+                "mean_height": round(sum(all_heights) / len(all_heights), 1),
+                "median_width": int(sorted_w[mid]),
+                "median_height": int(sorted_h[mid]),
+            }
 
     # Generate actionable diversity and quality recommendations
     print("\n" + "=" * 75)
