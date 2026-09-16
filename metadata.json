@@ -1,7 +1,7 @@
 {
   "name": "EcoSort AI",
   "description": "AI-powered multimodal waste identification, segregation, and responsible disposal assistant analyzing photos, text descriptions, and waste specification documents.",
-  "requestFramePermissions": ["camera"],
+  "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
 

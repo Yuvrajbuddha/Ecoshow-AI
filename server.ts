@@ -201,11 +201,10 @@ async function generateWithModelFallback(
   },
   traceId?: string
 ): Promise<{ response: any; modelUsed: string }> {
-  // Use gemini-3.8-flash as primary model followed by flash-lite and flash-latest
+  // Candidate models: gemini-3.8-flash followed by gemini-3.1-flash-lite
   const candidateModels = [
     "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
-    "gemini-flash-latest",
   ];
   let lastError: any = null;
 
@@ -213,12 +212,12 @@ async function generateWithModelFallback(
     const model = candidateModels[i];
     const cooldownUntil = modelCooldowns.get(model) || 0;
     if (Date.now() < cooldownUntil) {
-      console.info(`[Gemini SDK Invocation] Skipping model "${model}" due to active cooldown until ${new Date(cooldownUntil).toISOString()}`);
+      console.info(`[Gemini SDK Invocation] Skipping model "${model}" due to active cooldown (${Math.ceil((cooldownUntil - Date.now()) / 1000)}s remaining)`);
       continue;
     }
 
-    // Try up to 2 attempts for the primary model to handle transient network blips
-    const maxAttempts = model === "gemini-3.1-flash-lite" ? 2 : 1;
+    // Try up to 2 attempts for each model
+    const maxAttempts = 2;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const attemptStartTime = Date.now();
       console.info(`[Gemini SDK Invocation] Attempt ${attempt}/${maxAttempts} with model "${model}" (Trace: ${traceId || 'none'})`);
@@ -238,17 +237,24 @@ async function generateWithModelFallback(
         const statusCode = err?.status || err?.code || 500;
         const errMsg = String(err?.message || "");
         const isQuota = statusCode === 429 || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota");
+        const isHighDemand = statusCode === 503 || errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("UNAVAILABLE") || errMsg.includes("temporarily unavailable");
 
-        if (isQuota) {
-          // If gemini-3.1-flash-lite hits a brief rate limit, use a short 3-second cooldown; for other models use 30s
-          const cooldownDuration = model === "gemini-3.1-flash-lite" ? 3000 : 30_000;
+        if (isHighDemand) {
+          // Model is experiencing high demand spike (503). Set a 60s cooldown and immediately fail over to next model
+          const cooldownDuration = 60_000;
           modelCooldowns.set(model, Date.now() + cooldownDuration);
-          console.info(`[Gemini SDK Invocation] Model "${model}" reached rate limit (429) after ${attemptDuration}ms. Cooldown set for ${cooldownDuration}ms.`);
+          console.info(`[Gemini SDK Invocation] Model "${model}" is experiencing high demand (status 503) after ${attemptDuration}ms. Set 60s cooldown and failing over to next candidate model.`);
+          break; // break retry loop for this model and try next candidate immediately
+        } else if (isQuota) {
+          // Rate limit / quota reached (429).
+          const cooldownDuration = model === "gemini-3.1-flash-lite" ? 5000 : 30_000;
+          modelCooldowns.set(model, Date.now() + cooldownDuration);
+          console.info(`[Gemini SDK Invocation] Model "${model}" reached rate limit (429) after ${attemptDuration}ms. Cooldown set for ${cooldownDuration / 1000}s.`);
           break; // break retry loop for this model and try next candidate
         } else {
           console.info(`[Gemini SDK Invocation] Model "${model}" attempt ${attempt} failed with status ${statusCode} (${errMsg.slice(0, 100)}) after ${attemptDuration}ms.`);
           if (attempt < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 400));
+            await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
           }
         }
       }
@@ -1541,7 +1547,8 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
     const durationMs = Date.now() - startTime;
     const errMsg = (error as any)?.message || String(error || "");
     const isQuota = (error as any)?.status === 429 || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota");
-    console.info(`[Server Gemini API] Vision model unavailable (${isQuota ? 'Free-tier daily quota limit' : 'transient network'} in ${durationMs}ms). Serving smart local segregation guidance.`);
+    const isHighDemand = (error as any)?.status === 503 || errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("UNAVAILABLE");
+    console.info(`[Server Gemini API] Vision model unavailable (${isQuota ? 'Free-tier daily quota limit' : isHighDemand ? 'High demand spike (503)' : 'transient network'} in ${durationMs}ms). Serving smart local segregation guidance.`);
     const fallback = getFallbackAnalysis(req.body.text || req.body.hint, req.body.sampleId, req.body.imageBase64);
     const enrichedFallback = enrichWithIbmAi(fallback as any);
     if (!enrichedFallback.imageUrl && (effectiveMode === "text" || effectiveMode === "document")) {
@@ -1566,6 +1573,8 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
       salt: clientSalt,
       fallbackReason: isQuota
         ? "Gemini API daily free tier quota was exceeded. Provided smart localized segregation guidance."
+        : isHighDemand
+        ? "Gemini model is currently experiencing temporary high demand (503). Provided smart localized segregation guidance."
         : "Live AI model temporarily busy. Provided smart localized segregation guidance.",
     });
   }
@@ -1751,6 +1760,69 @@ ${ragContextText || "General municipal waste sorting principles apply."}`;
         "EcoSort AI is currently in demo mode. Remember: Always ensure recyclables are clean and dry, tape battery terminals before drop-off, and separate food-soiled paper from clean cardboard!",
       ragSources: ["EcoSort Core Knowledge Base"],
       isDemoMode: true,
+    });
+  }
+});
+
+// API: Voice Audio Transcription - converts recorded user audio into text
+app.post(["/api/transcribe-audio", "/transcribe-audio"], async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { audioBase64, mimeType = "audio/webm" } = req.body;
+    if (!audioBase64) {
+      res.status(400).json({ success: false, error: "Audio data is required" });
+      return;
+    }
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      res.json({
+        success: true,
+        text: "Clean cardboard packaging and dry plastic bottle",
+        isDemoMode: true,
+      });
+      return;
+    }
+
+    let cleanBase64 = String(audioBase64);
+    if (cleanBase64.includes(",")) {
+      cleanBase64 = cleanBase64.split(",")[1];
+    }
+    cleanBase64 = cleanBase64.trim();
+
+    // Clean audio mime type
+    const cleanMime = mimeType.split(";")[0].trim() || "audio/webm";
+
+    const promptText = "You are a specialized speech transcriber for a waste sorting assistant. Listen to the user speaking into their microphone describing waste items, materials, food leftovers, packaging, or discarded objects. Accurately transcribe what was spoken into concise, natural plain English describing the waste item. Output ONLY the clean transcribed text with no markdown, no quotes, no conversational filler, and no extra preamble.";
+
+    const { response } = await generateWithModelFallback(ai, {
+      contents: [
+        {
+          inlineData: {
+            mimeType: cleanMime,
+            data: cleanBase64,
+          },
+        },
+        {
+          text: promptText,
+        },
+      ],
+      config: {
+        temperature: 0.1,
+      },
+    });
+
+    const transcribed = (response.text || "").trim().replace(/^["']|["']$/g, "");
+    res.json({
+      success: true,
+      text: transcribed,
+      isDemoMode: false,
+    });
+  } catch (error) {
+    console.warn("[Server Voice Transcription] Audio transcription failed:", error);
+    res.json({
+      success: false,
+      error: "Unable to transcribe audio with live model.",
+      text: "",
     });
   }
 });

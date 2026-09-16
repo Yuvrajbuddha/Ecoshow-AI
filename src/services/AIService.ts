@@ -746,6 +746,43 @@ export class AIService {
       isDemoMode: true,
     };
   }
+
+  /**
+   * Transcribes recorded microphone audio to text via server-side AI model
+   */
+  public async transcribeAudio(
+    audioBase64: string,
+    mimeType = 'audio/webm'
+  ): Promise<{ text: string; isDemoMode: boolean }> {
+    const apiBase = getApiBaseUrl();
+    try {
+      const res = await fetch(`${apiBase}/api/transcribe-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioBase64,
+          mimeType,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && typeof data.text === 'string') {
+          return {
+            text: data.text,
+            isDemoMode: data.isDemoMode || false,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('Audio transcription API error:', err);
+    }
+
+    return {
+      text: '',
+      isDemoMode: true,
+    };
+  }
 }
 
 export const aiService = AIService.getInstance();

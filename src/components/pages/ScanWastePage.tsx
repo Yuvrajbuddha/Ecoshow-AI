@@ -29,7 +29,11 @@ import {
   FileSpreadsheet,
   FileUp,
   FileCode,
-  Check
+  Check,
+  Mic,
+  MicOff,
+  Radio,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -115,6 +119,22 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
 
   // Text mode states
   const [textContent, setTextContent] = useState('');
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceVolume, setVoiceVolume] = useState(0);
+  const [interimVoiceText, setInterimVoiceText] = useState('');
+  const [micPermissionError, setMicPermissionError] = useState<string | null>(null);
+  const [voiceSuccessMessage, setVoiceSuccessMessage] = useState<string | null>(null);
+
+  // Audio / Speech refs
+  const speechRecognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioMeterAnimationRef = useRef<number | null>(null);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Document mode states
   const [selectedDocFile, setSelectedDocFile] = useState<{
@@ -170,10 +190,11 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
 
   const steps = getStepsForMode(activeAnalysisMode);
 
-  // Stop camera on unmount
+  // Stop camera and voice recording on unmount
   useEffect(() => {
     return () => {
       stopCamera();
+      stopVoiceRecording(false);
     };
   }, []);
 
@@ -456,6 +477,267 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
   };
 
   // ─────────────────────────────────────────────────────────────────────────
+  // VOICE-TO-TEXT & AUDIO RECORDING HANDLING
+  // ─────────────────────────────────────────────────────────────────────────
+  const formatSeconds = (sec: number) => {
+    const mins = Math.floor(sec / 60);
+    const remainder = sec % 60;
+    return `${mins.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`;
+  };
+
+  const stopAudioTracks = () => {
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((t) => t.stop());
+      audioStreamRef.current = null;
+    }
+    if (audioMeterAnimationRef.current) {
+      cancelAnimationFrame(audioMeterAnimationRef.current);
+      audioMeterAnimationRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try {
+        audioContextRef.current.close();
+      } catch {}
+      audioContextRef.current = null;
+    }
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    setVoiceVolume(0);
+  };
+
+  const startVoiceRecording = async () => {
+    setMicPermissionError(null);
+    setVoiceSuccessMessage(null);
+    setInterimVoiceText('');
+    setRecordingSeconds(0);
+    audioChunksRef.current = [];
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setMicPermissionError('Microphone recording is not supported in this browser environment. Please type your description.');
+      return;
+    }
+
+    try {
+      // 1. Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+
+      // 2. Setup audio analyser for live sound wave visualizer
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const audioCtx = new AudioContextClass();
+          audioContextRef.current = audioCtx;
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          source.connect(analyser);
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const updateMeter = () => {
+            if (!audioStreamRef.current) return;
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
+            }
+            const avg = sum / dataArray.length;
+            const normalized = Math.min(100, Math.round((avg / 128) * 100));
+            setVoiceVolume(normalized);
+            audioMeterAnimationRef.current = requestAnimationFrame(updateMeter);
+          };
+          updateMeter();
+        }
+      } catch (audioCtxErr) {
+        console.warn('AudioContext meter setup skipped:', audioCtxErr);
+      }
+
+      // 3. Start seconds timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+
+      // 4. Start Web Speech recognition if supported
+      const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognitionClass) {
+        try {
+          const recognition = new SpeechRecognitionClass();
+          speechRecognitionRef.current = recognition;
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'en-US';
+
+          recognition.onresult = (event: any) => {
+            let interim = '';
+            let final = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const transcript = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                final += transcript + ' ';
+              } else {
+                interim += transcript;
+              }
+            }
+
+            if (interim) {
+              setInterimVoiceText(interim);
+            }
+
+            if (final) {
+              setTextContent((prev) => {
+                const cleanPrev = prev.trim();
+                const cleanFinal = final.trim();
+                return cleanPrev ? `${cleanPrev} ${cleanFinal}` : cleanFinal;
+              });
+              setInterimVoiceText('');
+            }
+          };
+
+          recognition.onerror = (event: any) => {
+            console.warn('SpeechRecognition error:', event.error);
+            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+              setMicPermissionError('Microphone permission denied. Please allow microphone access in your browser address bar.');
+            }
+          };
+
+          recognition.start();
+        } catch (recogErr) {
+          console.warn('SpeechRecognition initialization note:', recogErr);
+        }
+      }
+
+      // 5. Setup MediaRecorder as backup recording
+      try {
+        const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+        let supportedMime = '';
+        for (const m of mimeTypes) {
+          if (MediaRecorder.isTypeSupported(m)) {
+            supportedMime = m;
+            break;
+          }
+        }
+        const recorder = new MediaRecorder(stream, supportedMime ? { mimeType: supportedMime } : undefined);
+        mediaRecorderRef.current = recorder;
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+        recorder.start(250);
+      } catch (recErr) {
+        console.warn('MediaRecorder setup note:', recErr);
+      }
+
+      setIsRecordingVoice(true);
+    } catch (err: any) {
+      console.error('Microphone access failed:', err);
+      stopAudioTracks();
+      setIsRecordingVoice(false);
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setMicPermissionError('Microphone access was denied. Please allow microphone access in your browser settings to use voice input.');
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        setMicPermissionError('No microphone was detected on this device. Please connect a microphone and try again.');
+      } else {
+        setMicPermissionError(`Could not access microphone (${err?.message || 'Error'}).`);
+      }
+    }
+  };
+
+  const stopVoiceRecording = async (saveText = true) => {
+    setIsRecordingVoice(false);
+
+    // Stop speech recognition
+    if (speechRecognitionRef.current) {
+      try {
+        speechRecognitionRef.current.stop();
+      } catch {}
+      speechRecognitionRef.current = null;
+    }
+
+    // Stop MediaRecorder and extract blob
+    const recorder = mediaRecorderRef.current;
+    mediaRecorderRef.current = null;
+    let audioBlob: Blob | null = null;
+
+    if (recorder && recorder.state !== 'inactive') {
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => {
+          if (audioChunksRef.current.length > 0) {
+            const mime = recorder.mimeType || 'audio/webm';
+            audioBlob = new Blob(audioChunksRef.current, { type: mime });
+          }
+          resolve();
+        };
+        try {
+          recorder.stop();
+        } catch {
+          resolve();
+        }
+      });
+    }
+
+    // Stop hardware audio tracks
+    stopAudioTracks();
+
+    if (!saveText) {
+      setInterimVoiceText('');
+      return;
+    }
+
+    // If interim text was captured, append to text content
+    if (interimVoiceText.trim()) {
+      setTextContent((prev) => {
+        const cleanPrev = prev.trim();
+        const cleanInterim = interimVoiceText.trim();
+        return cleanPrev ? `${cleanPrev} ${cleanInterim}` : cleanInterim;
+      });
+      setInterimVoiceText('');
+      setVoiceSuccessMessage('Voice recorded and converted to text!');
+      setTimeout(() => setVoiceSuccessMessage(null), 4000);
+      return;
+    }
+
+    // If textContent was already populated by SpeechRecognition
+    if (textContent.trim()) {
+      setVoiceSuccessMessage('Voice recorded and converted to text!');
+      setTimeout(() => setVoiceSuccessMessage(null), 4000);
+      return;
+    }
+
+    // If textContent is still empty, transcribe recorded audio chunks with server-side AI model
+    if (audioBlob && (audioBlob as Blob).size > 1000) {
+      setIsTranscribingVoice(true);
+      try {
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64Data = reader.result as string;
+          const mime = (audioBlob as Blob).type || 'audio/webm';
+          const result = await aiService.transcribeAudio(base64Data, mime);
+          setIsTranscribingVoice(false);
+          if (result.text && result.text.trim()) {
+            setTextContent((prev) => {
+              const cleanPrev = prev.trim();
+              const cleanNew = result.text.trim();
+              return cleanPrev ? `${cleanPrev} ${cleanNew}` : cleanNew;
+            });
+            setVoiceSuccessMessage('Voice transcribed with AI!');
+            setTimeout(() => setVoiceSuccessMessage(null), 4000);
+          } else {
+            setMicPermissionError('No speech was detected in the audio recording. Please try speaking closer to your microphone.');
+          }
+        };
+      } catch (transcribeErr) {
+        setIsTranscribingVoice(false);
+        console.warn('Audio transcribe error:', transcribeErr);
+      }
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
   // TEXT MODE HANDLING
   // ─────────────────────────────────────────────────────────────────────────
   const handleTextAnalysisSubmit = async (e?: React.FormEvent) => {
@@ -607,6 +889,7 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
               type="button"
               id="tab-upload-image"
               onClick={() => {
+                if (isRecordingVoice) stopVoiceRecording(false);
                 setInputMode('image');
                 setErrorMessage(null);
               }}
@@ -634,13 +917,17 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
               }`}
             >
               <Type className="w-4 h-4 text-emerald-600" />
-              <span>Enter Text</span>
+              <span>Enter Text / Voice</span>
+              {isRecordingVoice && (
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              )}
             </button>
 
             <button
               type="button"
               id="tab-upload-document"
               onClick={() => {
+                if (isRecordingVoice) stopVoiceRecording(false);
                 setInputMode('document');
                 setErrorMessage(null);
               }}
@@ -1060,23 +1347,186 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
               )}
 
               {/* ─────────────────────────────────────────────────────────────
-                  MODE 2: ENTER TEXT
+                  MODE 2: ENTER TEXT / VOICE DICTATION
                  ───────────────────────────────────────────────────────────── */}
               {inputMode === 'text' && (
                 <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-10 shadow-sm space-y-6">
-                  <div className="flex items-center gap-3 pb-2 border-b border-slate-100">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-                      <Type className="w-6 h-6" />
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                        <Type className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg sm:text-xl font-bold text-slate-900 font-['Space_Grotesk',sans-serif]">
+                          Describe Your Waste Item
+                        </h2>
+                        <p className="text-xs sm:text-sm text-slate-500">
+                          Type or speak into your microphone to describe what you are throwing away
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="text-lg sm:text-xl font-bold text-slate-900 font-['Space_Grotesk',sans-serif]">
-                        Describe Your Waste Item
-                      </h2>
-                      <p className="text-xs sm:text-sm text-slate-500">
-                        Type what you are throwing away, including materials, condition, or labels
-                      </p>
+
+                    {/* Primary Voice-to-Text Toggle Button */}
+                    <div className="flex items-center gap-2">
+                      {!isRecordingVoice ? (
+                        <button
+                          type="button"
+                          id="btn-start-voice-recording"
+                          onClick={startVoiceRecording}
+                          disabled={isTranscribingVoice}
+                          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/90 text-xs font-bold shadow-2xs transition-all active:scale-95 disabled:opacity-50"
+                          title="Record description using microphone"
+                        >
+                          {isTranscribingVoice ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin text-emerald-700" />
+                              <span>Transcribing Voice...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Mic className="w-4 h-4 text-emerald-700" />
+                              <span>Record with Mic</span>
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          id="btn-stop-voice-recording"
+                          onClick={() => stopVoiceRecording(true)}
+                          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition-all active:scale-95 animate-pulse"
+                        >
+                          <MicOff className="w-4 h-4" />
+                          <span>Stop Recording ({formatSeconds(recordingSeconds)})</span>
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {/* Active Voice Recording Panel */}
+                  <AnimatePresence>
+                    {isRecordingVoice && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50/90 via-teal-50/70 to-emerald-50/90 border border-emerald-200 shadow-inner space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <span className="relative flex h-3.5 w-3.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500"></span>
+                              </span>
+                              <span className="text-xs font-bold uppercase tracking-wider text-rose-700">
+                                Microphone Active • {formatSeconds(recordingSeconds)}
+                              </span>
+                            </div>
+
+                            {/* Sound Wave Frequency Visualizer */}
+                            <div className="flex items-center gap-1 h-5 px-3 py-1 bg-white/80 rounded-full border border-emerald-200/60 shadow-2xs">
+                              <Radio className="w-3 h-3 text-emerald-600 mr-1 animate-pulse" />
+                              {[35, 70, 100, 55, 85, 45, 75].map((baseHeight, idx) => {
+                                const dynamicHeight = Math.max(
+                                  18,
+                                  Math.min(100, Math.round(baseHeight * (0.3 + (voiceVolume / 100) * 0.7)))
+                                );
+                                return (
+                                  <span
+                                    key={idx}
+                                    className="w-1 bg-emerald-600 rounded-full transition-all duration-75"
+                                    style={{ height: `${dynamicHeight}%` }}
+                                  />
+                                );
+                              })}
+                            </div>
+
+                            {/* Actions while recording */}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                id="btn-voice-done"
+                                onClick={() => stopVoiceRecording(true)}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-all active:scale-95"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Done</span>
+                              </button>
+                              <button
+                                type="button"
+                                id="btn-voice-cancel"
+                                onClick={() => stopVoiceRecording(false)}
+                                className="px-2.5 py-1.5 rounded-lg bg-white/80 hover:bg-slate-100 text-slate-600 text-xs font-semibold flex items-center gap-1 border border-slate-200 transition-all"
+                                title="Cancel recording without saving"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Cancel</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Live Speech Recognition Transcript Preview */}
+                          <div className="text-xs bg-white/95 p-3 rounded-xl border border-emerald-100/90 text-slate-700">
+                            {interimVoiceText ? (
+                              <span className="text-emerald-950 font-medium">
+                                "{interimVoiceText}" <span className="animate-pulse text-emerald-600 font-bold">|</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 italic">
+                                🎙️ Listening... Speak naturally to describe the waste item, packaging, or material.
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Transcribing Spinner Banner */}
+                  {isTranscribingVoice && (
+                    <div className="flex items-center gap-2.5 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-medium">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-700 shrink-0" />
+                      <span>Transcribing recorded voice into description...</span>
+                    </div>
+                  )}
+
+                  {/* Success Message Banner */}
+                  {voiceSuccessMessage && (
+                    <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-medium">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>{voiceSuccessMessage}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setVoiceSuccessMessage(null)}
+                        className="text-emerald-600 hover:text-emerald-900 p-0.5"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Mic Error Banner */}
+                  {micPermissionError && (
+                    <div className="flex items-start justify-between p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs">
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-semibold block text-rose-900">Microphone Notice</span>
+                          <span>{micPermissionError}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMicPermissionError(null)}
+                        className="text-rose-500 hover:text-rose-800 p-1"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
 
                   <form onSubmit={handleTextAnalysisSubmit} className="space-y-4">
                     <div className="space-y-1.5">
@@ -1084,16 +1534,51 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
                         <label htmlFor="input-waste-text" className="font-semibold text-slate-700">
                           Item Description
                         </label>
-                        <span>{textContent.length} characters</span>
+                        <div className="flex items-center gap-3">
+                          {textContent.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setTextContent('')}
+                              className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                            >
+                              Clear
+                            </button>
+                          )}
+                          <span>{textContent.length} characters</span>
+                        </div>
                       </div>
-                      <textarea
-                        id="input-waste-text"
-                        rows={4}
-                        value={textContent}
-                        onChange={(e) => setTextContent(e.target.value)}
-                        placeholder="e.g., A cracked ceramic coffee mug with blue glaze, an empty cardboard milk carton with a plastic screw cap, or a swollen lithium rechargeable phone battery..."
-                        className="w-full text-sm p-4 rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:border-emerald-500 focus:outline-hidden text-slate-800 placeholder-slate-400 transition-all shadow-2xs leading-relaxed"
-                      />
+
+                      {/* Textarea with integrated corner mic button */}
+                      <div className="relative">
+                        <textarea
+                          id="input-waste-text"
+                          rows={4}
+                          value={textContent}
+                          onChange={(e) => setTextContent(e.target.value)}
+                          placeholder="e.g., A cracked ceramic coffee mug with blue glaze, an empty cardboard milk carton with a plastic screw cap, or speak using the microphone..."
+                          className="w-full text-sm p-4 pr-12 rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:border-emerald-500 focus:outline-hidden text-slate-800 placeholder-slate-400 transition-all shadow-2xs leading-relaxed"
+                        />
+                        <button
+                          type="button"
+                          id="btn-textarea-mic"
+                          onClick={() => {
+                            if (isRecordingVoice) {
+                              stopVoiceRecording(true);
+                            } else {
+                              startVoiceRecording();
+                            }
+                          }}
+                          disabled={isTranscribingVoice}
+                          title={isRecordingVoice ? 'Stop voice recording' : 'Click to speak with microphone'}
+                          className={`absolute right-3 bottom-3 p-2 rounded-xl border transition-all ${
+                            isRecordingVoice
+                              ? 'bg-rose-500 text-white border-rose-600 animate-pulse shadow-md'
+                              : 'bg-white text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 border-slate-200 shadow-2xs'
+                          }`}
+                        >
+                          {isRecordingVoice ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
 
                     {/* Preset Prompt Suggestions */}
@@ -1117,13 +1602,14 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
 
                     {/* Submit Action */}
                     <div className="pt-3 flex flex-col sm:flex-row items-center justify-between gap-3">
-                      <div className="text-xs text-slate-500">
-                        ✨ EcoSort AI will classify the stream, recyclability, and assign the proper bin.
+                      <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>EcoSort AI will classify the stream, recyclability, and assign the proper bin.</span>
                       </div>
                       <button
                         type="submit"
                         id="btn-analyze-text"
-                        disabled={!textContent.trim()}
+                        disabled={!textContent.trim() || isRecordingVoice || isTranscribingVoice}
                         className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md shadow-emerald-700/20 transition-all flex items-center justify-center gap-2 active:scale-95"
                       >
                         <Send className="w-4 h-4" />
