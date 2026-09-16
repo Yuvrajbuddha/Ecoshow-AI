@@ -49,11 +49,8 @@ Click the **Deploy with Vercel** button above. Vercel will clone this repository
      - **Build Command**: `npm run build`
      - **Output Directory**: `dist`
      - **Install Command**: `npm install`
-3. **Add Environment Variable**:
-   - In the Vercel project configuration screen, add:
-     - **Name**: `GEMINI_API_KEY`
-     - **Value**: Your Google Gemini API Key from [Google AI Studio](https://aistudio.google.com/app/apikey)
-4. **Click Deploy**:
+
+3. **Click Deploy**:
    Vercel will compile the Vite frontend to global edge CDN and deploy serverless functions in `/api`.
 
 ---
