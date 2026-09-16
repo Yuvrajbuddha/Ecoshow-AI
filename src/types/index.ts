@@ -36,6 +36,26 @@ export interface WasteAnalysisResult {
   imageUrl?: string;
   isMock?: boolean;
   rawCategory?: string;
+  inputMode?: 'image' | 'text' | 'document';
+  inputText?: string;
+  documentName?: string;
+  documentExcerpt?: string;
+  ibmAiDetails?: {
+    enabled: boolean;
+    service: string;
+    model: string;
+    pipelineStage: string;
+    extractedEntities?: {
+      item?: string;
+      material?: string;
+      physicalCondition?: string;
+      hazardIndicators?: string[];
+      recyclableComponent?: string;
+    };
+    validationStatus: 'validated' | 'adjusted' | 'passed';
+    validationNotes?: string[];
+    carbonModelFactorSource?: string;
+  };
   rawJson?: {
     detected_item: string;
     category: string;

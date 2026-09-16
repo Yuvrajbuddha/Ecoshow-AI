@@ -9,6 +9,11 @@ export interface AnalyzeWasteOptions {
   engine?: InferenceEngine;
   threshold?: number;
   preferMl?: boolean;
+  inputType?: 'image' | 'text' | 'document';
+  text?: string;
+  documentBase64?: string;
+  documentName?: string;
+  documentText?: string;
 }
 
 export interface HealthStatus {
@@ -21,6 +26,17 @@ export interface HealthStatus {
     url: string;
     modelLoaded?: boolean;
     architecture?: string;
+  };
+  ibmService?: {
+    enabled: boolean;
+    watsonxConfigured: boolean;
+    activeModel: string;
+    capabilities?: string[];
+  };
+  ibmBobAgent?: {
+    agentName: string;
+    version: string;
+    role: string;
   };
 }
 
@@ -289,7 +305,39 @@ export class AIService {
       status: 'ok',
       hasGeminiKey: true,
       app: 'EcoSort AI',
-      version: '1.0.0',
+      version: '2.0.0',
+    };
+  }
+
+  /**
+   * Diagnostic check for IBM AI & IBM Bob status
+   */
+  public async getIbmStatus(): Promise<{
+    success: boolean;
+    service?: any;
+    agent?: any;
+    pipeline?: string[];
+  }> {
+    const apiBase = getApiBaseUrl();
+    try {
+      const res = await fetch(`${apiBase}/api/ibm/status`, { cache: 'no-store' });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {
+      // Return local fallback status
+    }
+    return {
+      success: true,
+      service: {
+        enabled: true,
+        watsonxConfigured: false,
+        activeModel: 'IBM Granite NLU Engine (Local Agent Runtime)',
+      },
+      agent: {
+        agentName: 'IBM Bob',
+        version: '2.4.0',
+      },
     };
   }
 
@@ -476,6 +524,7 @@ export class AIService {
 
     // ─── BRANCH 2: Gemini API / Server Vision Endpoint ────────────────────
     const apiBase = getApiBaseUrl();
+    const effectiveInputType = options?.inputType || (options?.documentBase64 ? 'document' : (options?.text && !sanitizedBase64 ? 'text' : 'image'));
     const backendPayload = {
       requestId: reqId,
       sessionId: sessionId,
@@ -483,6 +532,11 @@ export class AIService {
       timestamp: scanTimestamp,
       clientTimestampMs: scanTimestampMs,
       salt: scanSalt,
+      inputType: effectiveInputType,
+      text: options?.text,
+      documentBase64: options?.documentBase64,
+      documentName: options?.documentName,
+      documentText: options?.documentText,
       imageBase64: sanitizedBase64,
       mimeType: detectedMime,
       hint: hint?.trim() || undefined,
@@ -491,7 +545,7 @@ export class AIService {
       threshold: options?.threshold,
     };
 
-    console.log(`─── PHASE 2: DISPATCHING POST TO ${apiBase}/api/analyze-waste ───`);
+    console.log(`─── PHASE 2: DISPATCHING POST TO ${apiBase}/api/analyze-waste (Type: ${effectiveInputType}) ───`);
 
     try {
       const res = await fetch(`${apiBase}/api/analyze-waste`, {
@@ -522,7 +576,7 @@ export class AIService {
           return {
             result: {
               ...data.result,
-              imageUrl: sanitizedBase64,
+              imageUrl: sanitizedBase64 || data.result.imageUrl,
             },
             isDemoMode: Boolean(data.isDemoMode),
             engine: data.engine || data.modelUsed || 'gemini',
@@ -569,7 +623,7 @@ export class AIService {
 
     // ─── BRANCH 3: On-Device Heuristic Fallback ───────────────────────────
     console.warn('─── PHASE 4 (FALLBACK): SMART ON-DEVICE ENGINE ───');
-    const localResult = classifyWasteLocally(sanitizedBase64, hint, sampleId);
+    const localResult = classifyWasteLocally(sanitizedBase64, options?.text || hint, sampleId);
     console.log('Local Classifier Output Result:', localResult);
 
     return {
@@ -577,6 +631,81 @@ export class AIService {
       isDemoMode: true,
       engine: 'local_heuristic',
     };
+  }
+
+  /**
+   * Dedicated method for Text Description analysis
+   */
+  public async analyzeText(
+    textDescription: string,
+    hint?: string,
+    options?: AnalyzeWasteOptions
+  ): Promise<{ result: WasteAnalysisResult; isDemoMode: boolean; engine?: string }> {
+    return this.analyzeWaste('', 'text/plain', hint, undefined, {
+      ...options,
+      inputType: 'text',
+      text: textDescription,
+    });
+  }
+
+  /**
+   * Dedicated method for Document (PDF / spec sheets) analysis
+   */
+  public async analyzeDocument(
+    documentBase64: string,
+    documentName: string,
+    mimeType: string = 'application/pdf',
+    documentText?: string,
+    hint?: string,
+    options?: AnalyzeWasteOptions
+  ): Promise<{ result: WasteAnalysisResult; isDemoMode: boolean; engine?: string }> {
+    return this.analyzeWaste('', mimeType, hint, undefined, {
+      ...options,
+      inputType: 'document',
+      documentBase64,
+      documentName,
+      documentText,
+    });
+  }
+
+  /**
+   * Universal Multimodal Dispatcher
+   */
+  public async analyzeMultimodal(params: {
+    inputType: 'image' | 'text' | 'document';
+    imageBase64?: string;
+    text?: string;
+    documentBase64?: string;
+    documentName?: string;
+    documentText?: string;
+    mimeType?: string;
+    hint?: string;
+    sampleId?: string;
+    options?: AnalyzeWasteOptions;
+  }): Promise<{ result: WasteAnalysisResult; isDemoMode: boolean; engine?: string }> {
+    if (params.inputType === 'text') {
+      return this.analyzeText(params.text || '', params.hint, params.options);
+    }
+    if (params.inputType === 'document') {
+      return this.analyzeDocument(
+        params.documentBase64 || '',
+        params.documentName || 'waste_document.pdf',
+        params.mimeType || 'application/pdf',
+        params.documentText,
+        params.hint,
+        params.options
+      );
+    }
+    return this.analyzeWaste(
+      params.imageBase64 || '',
+      params.mimeType || 'image/jpeg',
+      params.hint,
+      params.sampleId,
+      {
+        ...params.options,
+        inputType: 'image',
+      }
+    );
   }
 
   /**

@@ -4,6 +4,18 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { WASTE_KNOWLEDGE_BASE, retrieveRagContext } from "./src/services/wasteKnowledgeBase.js";
 import { SAMPLE_WASTE_ITEMS } from "./src/services/sampleData.js";
+import {
+  isIbmWatsonxConfigured,
+  getIbmServiceStatus,
+  analyzeTextWithIbmAi,
+  enrichWithIbmAi,
+  extractEntitiesWithIbmNlu,
+  validateAndAuditWasteResult,
+} from "./src/services/ibmAiService.js";
+import {
+  executeIbmBobPipeline,
+  getIbmBobAgentInfo,
+} from "./src/services/ibmBobAgent.js";
 
 dotenv.config();
 
@@ -91,6 +103,95 @@ function computeImageFingerprint(str: string): string {
 // In-memory model cooldown tracker to avoid hammering models when free quota limits are hit
 const modelCooldowns = new Map<string, number>();
 
+// Helper to extract text from a PDF Buffer using pdf-parse with resilient fallback
+async function extractTextFromPdfBuffer(pdfBuffer: Buffer): Promise<string> {
+  try {
+    const pdfParseModule = await import("pdf-parse");
+    const PDFParseClass = (pdfParseModule as any).PDFParse;
+    if (PDFParseClass) {
+      const parser = new PDFParseClass({});
+      await parser.load(pdfBuffer);
+      const text = await parser.getText();
+      if (typeof text === "string" && text.trim().length > 0) {
+        return text.trim();
+      }
+      if (text && typeof text.text === "string" && text.text.trim().length > 0) {
+        return text.text.trim();
+      }
+    }
+  } catch (err) {
+    console.warn("[PDF Parse] Note on PDF parser execution:", err);
+  }
+
+  // Fallback heuristic: extract text streams from PDF buffer
+  try {
+    const raw = pdfBuffer.toString("latin1");
+    const textMatches = raw.match(/\(([^)]{2,})\)/g) || [];
+    const extracted = textMatches
+      .map((m) => m.slice(1, -1))
+      .filter((s) => /[a-zA-Z0-9]{3,}/.test(s))
+      .join(" ");
+    if (extracted.length > 20) {
+      return extracted.slice(0, 8000);
+    }
+    const plainMatches = raw.match(/[\x20-\x7E\t\n\r]{4,}/g) || [];
+    return plainMatches.join(" ").slice(0, 5000);
+  } catch {
+    return "";
+  }
+}
+
+// Generate an SVG data-URI visual for text or document analyses when no photograph is uploaded
+function generateMultimodalVisual(
+  type: "text" | "document" | "image",
+  title: string,
+  category: string,
+  bin: string
+): string {
+  const isDoc = type === "document";
+  const icon = isDoc ? "📄" : "📝";
+  const subtitle = isDoc ? "Document Waste Analysis" : "Text Description Analysis";
+  const safeTitle = (title || "Waste Item")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .slice(0, 42);
+  const safeCategory = (category || "Recyclable")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const safeBin = (bin || "Recommended Bin")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .slice(0, 38);
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0F172A" />
+        <stop offset="100%" stop-color="#1E293B" />
+      </linearGradient>
+      <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#10B981" />
+        <stop offset="100%" stop-color="#059669" />
+      </linearGradient>
+    </defs>
+    <rect width="600" height="400" fill="url(#bg)" rx="24"/>
+    <rect x="24" y="24" width="552" height="352" fill="none" stroke="#334155" stroke-width="2" stroke-dasharray="6,6" rx="16"/>
+    <circle cx="300" cy="120" r="50" fill="#047857" opacity="0.25"/>
+    <circle cx="300" cy="120" r="38" fill="#065F46" />
+    <text x="300" y="132" font-size="34" text-anchor="middle">${icon}</text>
+    <rect x="220" y="185" width="160" height="24" rx="12" fill="url(#accent)"/>
+    <text x="300" y="201" font-family="system-ui, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">${subtitle.toUpperCase()}</text>
+    <text x="300" y="248" font-family="system-ui, sans-serif" font-size="20" font-weight="bold" fill="#F8FAFC" text-anchor="middle">${safeTitle}</text>
+    <text x="300" y="280" font-family="system-ui, sans-serif" font-size="14" font-weight="600" fill="#34D399" text-anchor="middle">${safeCategory} • ${safeBin}</text>
+    <text x="300" y="330" font-family="system-ui, sans-serif" font-size="12" fill="#94A3B8" text-anchor="middle">EcoSort AI Multimodal Classification Engine</text>
+  </svg>`;
+
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
 // Resilient model invocation with automatic fallbacks for 503 high-demand, rate limits, or errors
 async function generateWithModelFallback(
   ai: GoogleGenAI,
@@ -100,9 +201,9 @@ async function generateWithModelFallback(
   },
   traceId?: string
 ): Promise<{ response: any; modelUsed: string }> {
-  // Use gemini-3.1-flash-lite as primary high-throughput model with its own quota pool,
-  // followed by gemini-flash-latest for fallback coverage
+  // Use gemini-3.8-flash as primary model followed by flash-lite and flash-latest
   const candidateModels = [
+    "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
     "gemini-flash-latest",
   ];
@@ -167,8 +268,28 @@ app.get(["/api/health", "/health"], (_req: Request, res: Response) => {
     status: "ok",
     hasGeminiKey: hasKey,
     app: "EcoSort AI",
-    version: "1.0.0",
+    version: "2.0.0",
     platform: process.env.VERCEL ? "vercel-serverless" : "container",
+    ibmService: getIbmServiceStatus(),
+    ibmBobAgent: getIbmBobAgentInfo(),
+  });
+});
+
+// Dedicated IBM AI & IBM Bob status endpoint
+app.get(["/api/ibm/status", "/ibm/status"], (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    service: getIbmServiceStatus(),
+    agent: getIbmBobAgentInfo(),
+    pipeline: [
+      "1. Input Ingestion (Image / Text / Document)",
+      "2. Primary Classification (ML Model / Vision)",
+      "3. IBM Granite NLU & Entity Extraction",
+      "4. Waste Information Processing & Bin Mapping",
+      "5. IBM Response Validation & Safety Audit",
+      "6. EPA WARM Circular Economy Carbon Accounting"
+    ],
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -454,7 +575,7 @@ function formatMlResultToWasteAnalysis(mlData: any, imageBase64: string): any {
   const confidence = typeof mlData.confidence === "number" ? mlData.confidence : 90;
   const isRecyclable = Boolean(mlData.recyclable);
 
-  return {
+  const baseResult = {
     detectedItem: mlData.detected_item || "Identified Waste Item",
     material: mlData.category || "Classified Material",
     category: normalizedCategory,
@@ -472,7 +593,7 @@ function formatMlResultToWasteAnalysis(mlData: any, imageBase64: string): any {
       `4. Eco Impact: ${mlData.sustainability_tip || "Proper sorting preserves recyclable materials."}`
     ],
     confidence: confidence,
-    confidenceLevel: confidence >= 85 ? "high" : "medium",
+    confidenceLevel: confidence >= 85 ? ("high" as const) : ("medium" as const),
     environmentalImpact: mlData.sustainability_tip || "Proper segregation diverts materials from landfill.",
     recommendedDisposal: mlData.disposal_instruction || "Deposit into designated bin.",
     whyThisResult: `Classified by trained deep learning model (${categoryLabel}, ${confidence}% confidence).`,
@@ -480,7 +601,7 @@ function formatMlResultToWasteAnalysis(mlData: any, imageBase64: string): any {
     ecoActionScore: Math.min(98, Math.max(70, Math.round(confidence))),
     specialHandlingRequired: isSpecial,
     specialHandlingNotes: isSpecial ? "Warning: Do not dispose into standard curbside household bins." : undefined,
-    contaminationRisk: isRecyclable ? "low" : "none",
+    contaminationRisk: isRecyclable ? ("low" as const) : ("none" as const),
     carbonSavedKg: normalizedCategory === "recyclable" ? 0.28 : normalizedCategory === "organic" ? 0.22 : normalizedCategory === "ewaste" ? 0.50 : 0.10,
     imageUrl: imageBase64,
     id: `ml-scan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
@@ -498,10 +619,20 @@ function formatMlResultToWasteAnalysis(mlData: any, imageBase64: string): any {
       sustainability_tip: mlData.sustainability_tip
     }
   };
+
+  // Run through IBM AI validation and enrichment pipeline
+  return enrichWithIbmAi(baseResult as any);
 }
 
-// API: Analyze Waste Image (Multimodal Vision) - supports /api/analyze-waste, /api/classify, and root aliases
-app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"], async (req: Request, res: Response): Promise<void> => {
+// API: Analyze Waste Multimodal (Image, Text, Document) - supports /api/analyze-waste, /api/analyze-multimodal, /api/classify
+app.post([
+  "/api/analyze-waste",
+  "/analyze-waste",
+  "/api/analyze-multimodal",
+  "/analyze-multimodal",
+  "/api/classify",
+  "/classify"
+], async (req: Request, res: Response): Promise<void> => {
   const serverTime = new Date().toISOString();
   const clientSessionId = (req.headers["x-session-id"] as string) || req.body?.sessionId || req.body?.session_id || `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   const clientReqId = (req.headers["x-client-request-id"] as string) || req.body?.requestId || `scan-req-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -520,22 +651,517 @@ app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"],
   res.setHeader("X-Request-Salt", clientSalt);
   res.setHeader("X-Server-Trace-Id", traceId);
 
-  // Mandatory audit log: Log the request ID, session ID, and timestamp for every scan
-  console.log(`🔍 [Scan Analysis Server] Request ID: ${clientReqId} | Session ID: ${clientSessionId} | Timestamp: ${clientTimestamp} | Salt: ${clientSalt} | Trace: ${traceId}`);
+  // Parse multimodal payload
+  const {
+    inputType,
+    text,
+    documentBase64,
+    documentName,
+    documentText,
+    imageBase64,
+    mimeType = "image/jpeg",
+    hint,
+    sampleId,
+    forceMock,
+    preferMl,
+    threshold,
+  } = req.body;
+
+  // Determine effective modality: 'image' | 'text' | 'document'
+  let effectiveMode: "image" | "text" | "document" = "image";
+  if (inputType === "text" || inputType === "document" || inputType === "image") {
+    effectiveMode = inputType;
+  } else if (documentBase64 || (mimeType === "application/pdf" && imageBase64)) {
+    effectiveMode = "document";
+  } else if (text && String(text).trim().length > 0 && !imageBase64 && !documentBase64) {
+    effectiveMode = "text";
+  } else {
+    effectiveMode = "image";
+  }
+
+  console.log(`🔍 [Multimodal Analysis Server] Mode: "${effectiveMode}" | Req: ${clientReqId} | Session: ${clientSessionId} | Trace: ${traceId}`);
 
   try {
-    const { imageBase64, mimeType = "image/jpeg", hint, sampleId, forceMock } = req.body;
-
     const ai = getGeminiClient();
 
-    // Extract clean base64 data regardless of data URL formatting
+    // ─────────────────────────────────────────────────────────────────────────────
+    // MODE 1: TEXT DESCRIPTION INPUT
+    // ─────────────────────────────────────────────────────────────────────────────
+    if (effectiveMode === "text") {
+      const userText = String(text || hint || "").trim();
+      if (!userText || userText.length < 2) {
+        res.status(400).json({
+          success: false,
+          error: "Please enter a description of the waste item you wish to classify.",
+          requestId: clientReqId,
+          sessionId: clientSessionId,
+        });
+        return;
+      }
+
+      console.group(`📝 [Multimodal Text Analysis | Trace: ${traceId}]`);
+      console.log("Input Text:", userText);
+
+      // If Gemini client not available, run IBM AI Granite NLU text classifier
+      if (!ai) {
+        console.warn("Gemini client unavailable. Processing text input via IBM AI Granite NLU Pipeline.");
+        const ibmAnalysis = await analyzeTextWithIbmAi(userText, sampleId);
+        const visual = generateMultimodalVisual("text", ibmAnalysis.result.detectedItem, ibmAnalysis.result.categoryLabel, ibmAnalysis.result.binColor);
+        console.groupEnd();
+        res.json({
+          success: true,
+          result: {
+            ...ibmAnalysis.result,
+            imageUrl: visual,
+          },
+          isDemoMode: !ibmAnalysis.isWatsonxLive,
+          engine: ibmAnalysis.isWatsonxLive ? "ibm_watsonx_granite" : "ibm_granite_nlu",
+          modelUsed: ibmAnalysis.modelUsed,
+          requestId: clientReqId,
+          sessionId: clientSessionId,
+          session_id: clientSessionId,
+          timestamp: clientTimestamp,
+        });
+        return;
+      }
+
+      const textSystemInstruction = `You are an AI-powered Waste Classification Assistant called EcoSort AI.
+The user has provided a text description of a waste item.
+Understand the user's description and classify the waste into one of these exact 11 categories:
+1. Wet Waste
+2. Dry Waste
+3. Plastic
+4. Paper
+5. Glass
+6. Metal
+7. E-Waste
+8. Hazardous Waste
+9. Organic Waste
+10. Recyclable Waste
+11. Other/Unknown
+
+RULES:
+- Understand the physical composition, material properties, and typical municipal sorting rules for the described item.
+- Provide confidence score (0 to 100).
+- Recommend the appropriate disposal container/bin.
+- Provide clear recyclability status.
+- Provide concise, practical disposal instructions.
+- Provide a sustainability/eco tip.
+- Return strictly valid JSON adhering to the specified schema.`;
+
+      const textPrompt = `The user describes this waste item:
+"${userText}"
+
+Classify this waste item and provide unified recycling/disposal guidance.
+
+Return ONLY valid JSON in this exact structure:
+{
+  "detected_item": "concise name of the described item",
+  "category": "one category from the 11 categories",
+  "material": "main material composition",
+  "confidence": 92,
+  "bin": "recommended bin",
+  "recyclable": true,
+  "reason": "explanation of classification based on the user description",
+  "disposal_instruction": "step-by-step disposal instruction",
+  "sustainability_tip": "one short useful environmental tip"
+}`;
+
+      const { response, modelUsed } = await generateWithModelFallback(
+        ai,
+        {
+          contents: [{ text: textPrompt }],
+          config: {
+            systemInstruction: textSystemInstruction,
+            responseMimeType: "application/json",
+          },
+        },
+        traceId
+      );
+
+      let rawText = response.text || "{}";
+      rawText = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/gi, "").trim();
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        const match = rawText.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else throw new Error("Could not parse JSON response for text analysis");
+      }
+
+      const detectedItemName = parsed.detected_item || parsed.detectedItem || userText;
+      const rawCategory = String(parsed.category || "Dry Waste").trim();
+      const catLower = rawCategory.toLowerCase();
+      let normalizedCategory: "recyclable" | "organic" | "ewaste" | "hazardous" | "general" = "recyclable";
+      let categoryLabel = rawCategory;
+
+      if (catLower.includes("wet") || catLower.includes("organic")) {
+        normalizedCategory = "organic";
+        categoryLabel = catLower.includes("wet") ? "Wet Waste" : "Organic Waste";
+      } else if (catLower.includes("e-waste") || catLower.includes("electronic")) {
+        normalizedCategory = "ewaste";
+        categoryLabel = "E-Waste";
+      } else if (catLower.includes("hazard")) {
+        normalizedCategory = "hazardous";
+        categoryLabel = "Hazardous Waste";
+      } else if (catLower.includes("other") || catLower.includes("unknown") || catLower.includes("trash") || catLower.includes("landfill")) {
+        normalizedCategory = "general";
+        categoryLabel = "Other/Unknown";
+      } else {
+        normalizedCategory = "recyclable";
+      }
+
+      const isSpecial = normalizedCategory === "ewaste" || normalizedCategory === "hazardous";
+      const rawConfidence = typeof parsed.confidence === "number" ? parsed.confidence : 92;
+      const isRecyclableBool = typeof parsed.recyclable === "boolean" ? parsed.recyclable : (normalizedCategory === "recyclable");
+      const disposalInstruction = parsed.disposal_instruction || parsed.disposalInstructions || "Deposit into the recommended waste container.";
+      const reasoning = parsed.reason || `Classified based on user description: "${userText}"`;
+      const sustainabilityTip = parsed.sustainability_tip || parsed.ecoTip || "Proper segregation diverts reusable materials from landfill.";
+      const rawBin = parsed.bin || (
+        normalizedCategory === "organic" ? "Green Bin (Wet / Organic Compost)" :
+        normalizedCategory === "recyclable" ? "Blue Bin (Dry Recyclables)" :
+        normalizedCategory === "ewaste" ? "Yellow Bin (Specialized E-Waste Drop-Off)" :
+        normalizedCategory === "hazardous" ? "Red Bin (Hazardous Material Depot)" :
+        "Black/Grey Bin (General Waste / Landfill)"
+      );
+
+      const visualUrl = generateMultimodalVisual("text", detectedItemName, categoryLabel, rawBin);
+
+      const unifiedResult = {
+        id: `text-scan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        detectedItem: detectedItemName,
+        material: parsed.material || "Identified Material",
+        category: normalizedCategory,
+        categoryLabel: categoryLabel,
+        recyclability: isRecyclableBool
+          ? (disposalInstruction.toLowerCase().includes("rinse") ? "100% Recyclable (Rinse/clean before recycling)" : "Recyclable")
+          : (isSpecial ? "Specialized Collection Required (Do NOT put in household waste)" : "Non-Recyclable Landfill Residual"),
+        disposalInstructions: disposalInstruction,
+        recommendedDisposal: disposalInstruction,
+        binColor: rawBin,
+        whereToSegregate: `Deposit into ${rawBin}. ${disposalInstruction}`,
+        segregationSteps: [
+          `1. Description Analysis: Identified "${detectedItemName}" from user description.`,
+          `2. Material Verification: ${parsed.material || "Identified material"}.`,
+          `3. Preparation: ${disposalInstruction}`,
+          `4. Segregation: Deposit into ${rawBin}.`
+        ],
+        confidence: rawConfidence,
+        confidenceLevel: rawConfidence >= 85 ? ("high" as const) : ("medium" as const),
+        environmentalImpact: sustainabilityTip,
+        whyThisResult: reasoning,
+        ecoTip: sustainabilityTip,
+        ecoActionScore: Math.min(98, Math.max(70, rawConfidence)),
+        specialHandlingRequired: isSpecial,
+        specialHandlingNotes: isSpecial ? "Warning: Do not discard into normal household trash or curbside bins." : undefined,
+        contaminationRisk: isRecyclableBool ? "low" : "none",
+        carbonSavedKg: normalizedCategory === "recyclable" ? 0.28 : normalizedCategory === "organic" ? 0.22 : normalizedCategory === "ewaste" ? 0.50 : 0.10,
+        imageUrl: visualUrl,
+        timestamp: new Date().toISOString(),
+        isMock: false,
+        inputMode: "text" as const,
+        inputText: userText,
+        rawJson: {
+          detected_item: detectedItemName,
+          category: categoryLabel,
+          material: parsed.material || "Identified Material",
+          confidence: rawConfidence,
+          bin: rawBin,
+          recyclable: isRecyclableBool,
+          reason: reasoning,
+          disposal_instruction: disposalInstruction,
+          sustainability_tip: sustainabilityTip,
+        },
+      };
+
+      // Execute IBM Bob pipeline: Entity extraction, ISO 14001 validation & EPA carbon accounting
+      const { result: finalEnrichedResult, trace: ibmTrace } = await executeIbmBobPipeline("text", unifiedResult as any, traceId, userText);
+
+      console.log("✅ Text Classification Succeeded & IBM Validated:", finalEnrichedResult.detectedItem, "| Stream:", finalEnrichedResult.categoryLabel);
+      console.groupEnd();
+
+      res.json({
+        success: true,
+        result: finalEnrichedResult,
+        isDemoMode: false,
+        modelUsed: `${modelUsed} + IBM Granite Validator`,
+        ibmExecutionTrace: ibmTrace,
+        requestId: clientReqId,
+        sessionId: clientSessionId,
+        session_id: clientSessionId,
+        timestamp: clientTimestamp,
+        salt: clientSalt,
+      });
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // MODE 2: DOCUMENT INPUT (PDF / TEXT-BASED SPECIFICATIONS)
+    // ─────────────────────────────────────────────────────────────────────────────
+    if (effectiveMode === "document") {
+      const docRaw = String(documentBase64 || imageBase64 || "");
+      let cleanDocBase64 = docRaw.includes(",") ? docRaw.split(",")[1] : docRaw;
+      cleanDocBase64 = cleanDocBase64.replace(/\s+/g, "");
+      const docName = String(documentName || (mimeType === "application/pdf" ? "document.pdf" : "waste_document.txt")).trim();
+
+      console.group(`📄 [Multimodal Document Analysis | Trace: ${traceId}]`);
+      console.log("Document Name:", docName);
+      console.log("Document Base64 Length:", cleanDocBase64.length);
+
+      let extractedDocText = String(documentText || "").trim();
+
+      // If text not provided, extract server-side
+      if (!extractedDocText && cleanDocBase64.length > 0) {
+        const isPdf = docName.toLowerCase().endsWith(".pdf") || mimeType === "application/pdf" || docRaw.startsWith("data:application/pdf");
+        if (isPdf) {
+          try {
+            const buf = Buffer.from(cleanDocBase64, "base64");
+            extractedDocText = await extractTextFromPdfBuffer(buf);
+            console.log("Extracted PDF text length:", extractedDocText.length, "chars");
+          } catch (pdfErr) {
+            console.warn("Server PDF extraction notice:", pdfErr);
+          }
+        } else {
+          try {
+            extractedDocText = Buffer.from(cleanDocBase64, "base64").toString("utf-8");
+          } catch {
+            extractedDocText = "";
+          }
+        }
+      }
+
+      if ((!cleanDocBase64 || cleanDocBase64.length < 20) && (!extractedDocText || extractedDocText.length < 5)) {
+        res.status(400).json({
+          success: false,
+          error: "Please upload a valid document file (such as a PDF, TXT, or packaging spec sheet).",
+          requestId: clientReqId,
+          sessionId: clientSessionId,
+        });
+        return;
+      }
+
+      // If Gemini client not available, run IBM AI Granite NLU on extracted document text
+      if (!ai) {
+        console.warn("Gemini client unavailable. Processing document text via IBM AI Granite NLU Pipeline.");
+        const ibmAnalysis = await analyzeTextWithIbmAi(extractedDocText || docName, sampleId);
+        const visual = generateMultimodalVisual("document", ibmAnalysis.result.detectedItem, ibmAnalysis.result.categoryLabel, ibmAnalysis.result.binColor);
+        console.groupEnd();
+        res.json({
+          success: true,
+          result: {
+            ...ibmAnalysis.result,
+            imageUrl: visual,
+            inputMode: "document",
+            documentName: docName,
+            documentExcerpt: extractedDocText.slice(0, 350),
+          },
+          isDemoMode: !ibmAnalysis.isWatsonxLive,
+          engine: ibmAnalysis.isWatsonxLive ? "ibm_watsonx_granite" : "ibm_granite_nlu",
+          modelUsed: ibmAnalysis.modelUsed,
+          requestId: clientReqId,
+          sessionId: clientSessionId,
+          session_id: clientSessionId,
+          timestamp: clientTimestamp,
+        });
+        return;
+      }
+
+      const docSystemInstruction = `You are an AI-powered Environmental Compliance and Waste Classification Auditor called EcoSort AI.
+Analyze the uploaded waste-related document (e.g. equipment specification, packaging material safety data sheet (MSDS/SDS), component bill of materials, product teardown, or waste audit manifest).
+Identify the main waste item, component, or material mentioned in the document and classify it into one of these exact 11 categories:
+1. Wet Waste
+2. Dry Waste
+3. Plastic
+4. Paper
+5. Glass
+6. Metal
+7. E-Waste
+8. Hazardous Waste
+9. Organic Waste
+10. Recyclable Waste
+11. Other/Unknown
+
+RULES:
+- Extract factual waste-related specifications directly from the document (e.g., polymers like PET/HDPE, battery chemistry like Li-ion, electronics, paperboard, toxic solvents).
+- State confidence score (0-100).
+- Recommend the appropriate container/bin and disposal process.
+- Give a practical recyclability determination.
+- Give actionable disposal instruction based on the material in the document.
+- Provide a sustainability tip.
+- Return strictly valid JSON adhering to the specified schema.`;
+
+      const docPromptText = `Document Name: "${docName}"
+${extractedDocText ? `Extracted Document Text / Excerpt:\n"""\n${extractedDocText.slice(0, 5000)}\n"""\n` : ""}
+${hint ? `User note / context: "${hint}"\n` : ""}
+
+Extract the primary waste item or material from this document and classify its disposal method.
+
+Return ONLY valid JSON in this exact structure:
+{
+  "detected_item": "name of the primary waste item/material identified in document",
+  "category": "one category from the 11 categories",
+  "material": "material composition according to document",
+  "confidence": 94,
+  "bin": "recommended bin",
+  "recyclable": true,
+  "reason": "summary of document findings and classification rationale",
+  "disposal_instruction": "actionable disposal instruction according to document/standards",
+  "sustainability_tip": "one short useful environmental tip"
+}`;
+
+      // If document is PDF, we pass PDF inlineData as well as prompt for native multimodal processing
+      const contentsPayload: any[] = [];
+      const isPdfDoc = docName.toLowerCase().endsWith(".pdf") || mimeType === "application/pdf";
+      if (isPdfDoc && cleanDocBase64.length > 20) {
+        contentsPayload.push({
+          inlineData: {
+            mimeType: "application/pdf",
+            data: cleanDocBase64,
+          },
+        });
+      }
+      contentsPayload.push({ text: docPromptText });
+
+      const { response, modelUsed } = await generateWithModelFallback(
+        ai,
+        {
+          contents: contentsPayload,
+          config: {
+            systemInstruction: docSystemInstruction,
+            responseMimeType: "application/json",
+          },
+        },
+        traceId
+      );
+
+      let rawText = response.text || "{}";
+      rawText = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/gi, "").trim();
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        const match = rawText.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else throw new Error("Could not parse JSON response for document analysis");
+      }
+
+      const detectedItemName = parsed.detected_item || parsed.detectedItem || `Document Item (${docName})`;
+      const rawCategory = String(parsed.category || "Recyclable Waste").trim();
+      const catLower = rawCategory.toLowerCase();
+      let normalizedCategory: "recyclable" | "organic" | "ewaste" | "hazardous" | "general" = "recyclable";
+      let categoryLabel = rawCategory;
+
+      if (catLower.includes("wet") || catLower.includes("organic")) {
+        normalizedCategory = "organic";
+        categoryLabel = catLower.includes("wet") ? "Wet Waste" : "Organic Waste";
+      } else if (catLower.includes("e-waste") || catLower.includes("electronic")) {
+        normalizedCategory = "ewaste";
+        categoryLabel = "E-Waste";
+      } else if (catLower.includes("hazard")) {
+        normalizedCategory = "hazardous";
+        categoryLabel = "Hazardous Waste";
+      } else if (catLower.includes("other") || catLower.includes("unknown") || catLower.includes("trash") || catLower.includes("landfill")) {
+        normalizedCategory = "general";
+        categoryLabel = "Other/Unknown";
+      } else {
+        normalizedCategory = "recyclable";
+      }
+
+      const isSpecial = normalizedCategory === "ewaste" || normalizedCategory === "hazardous";
+      const rawConfidence = typeof parsed.confidence === "number" ? parsed.confidence : 90;
+      const isRecyclableBool = typeof parsed.recyclable === "boolean" ? parsed.recyclable : (normalizedCategory === "recyclable");
+      const disposalInstruction = parsed.disposal_instruction || parsed.disposalInstructions || "Deposit into the recommended waste container.";
+      const reasoning = parsed.reason || `Extracted and classified from document: "${docName}"`;
+      const sustainabilityTip = parsed.sustainability_tip || parsed.ecoTip || "Auditing packaging and material safety sheets prevents environmental contamination.";
+      const rawBin = parsed.bin || (
+        normalizedCategory === "organic" ? "Green Bin (Wet / Organic Compost)" :
+        normalizedCategory === "recyclable" ? "Blue Bin (Dry Recyclables)" :
+        normalizedCategory === "ewaste" ? "Yellow Bin (Specialized E-Waste Drop-Off)" :
+        normalizedCategory === "hazardous" ? "Red Bin (Hazardous Material Depot)" :
+        "Black/Grey Bin (General Waste / Landfill)"
+      );
+
+      const visualUrl = generateMultimodalVisual("document", detectedItemName, categoryLabel, rawBin);
+
+      const unifiedResult = {
+        id: `doc-scan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        detectedItem: detectedItemName,
+        material: parsed.material || "Document Specified Material",
+        category: normalizedCategory,
+        categoryLabel: categoryLabel,
+        recyclability: isRecyclableBool
+          ? "Recyclable (Follow document specifications)"
+          : (isSpecial ? "Specialized Drop-Off Required (Do NOT landfill)" : "Non-Recyclable Landfill Residual"),
+        disposalInstructions: disposalInstruction,
+        recommendedDisposal: disposalInstruction,
+        binColor: rawBin,
+        whereToSegregate: `Deposit into ${rawBin}. ${disposalInstruction}`,
+        segregationSteps: [
+          `1. Document Audit: Extracted "${detectedItemName}" from ${docName}.`,
+          `2. Material Composition: ${parsed.material || "Declared material"}.`,
+          `3. Compliance Instruction: ${disposalInstruction}`,
+          `4. Final Stream: Deposit into ${rawBin}.`
+        ],
+        confidence: rawConfidence,
+        confidenceLevel: rawConfidence >= 85 ? ("high" as const) : ("medium" as const),
+        environmentalImpact: sustainabilityTip,
+        whyThisResult: reasoning,
+        ecoTip: sustainabilityTip,
+        ecoActionScore: Math.min(98, Math.max(70, rawConfidence)),
+        specialHandlingRequired: isSpecial,
+        specialHandlingNotes: isSpecial ? "Warning: Do not discard into normal household trash or curbside bins." : undefined,
+        contaminationRisk: isRecyclableBool ? "low" : "none",
+        carbonSavedKg: normalizedCategory === "recyclable" ? 0.35 : normalizedCategory === "organic" ? 0.22 : normalizedCategory === "ewaste" ? 0.50 : 0.10,
+        imageUrl: visualUrl,
+        timestamp: new Date().toISOString(),
+        isMock: false,
+        inputMode: "document" as const,
+        documentName: docName,
+        documentExcerpt: extractedDocText ? extractedDocText.slice(0, 350) : undefined,
+        rawJson: {
+          detected_item: detectedItemName,
+          category: categoryLabel,
+          material: parsed.material || "Document Specified Material",
+          confidence: rawConfidence,
+          bin: rawBin,
+          recyclable: isRecyclableBool,
+          reason: reasoning,
+          disposal_instruction: disposalInstruction,
+          sustainability_tip: sustainabilityTip,
+        },
+      };
+
+      // Execute IBM Bob pipeline: Entity extraction, ISO 14001 validation & EPA carbon accounting
+      const { result: finalEnrichedDocResult, trace: ibmDocTrace } = await executeIbmBobPipeline("document", unifiedResult as any, traceId, extractedDocText);
+
+      console.log("✅ Document Classification Succeeded & IBM Validated:", finalEnrichedDocResult.detectedItem, "| Stream:", finalEnrichedDocResult.categoryLabel);
+      console.groupEnd();
+
+      res.json({
+        success: true,
+        result: finalEnrichedDocResult,
+        isDemoMode: false,
+        modelUsed: `${modelUsed} + IBM Granite Validator`,
+        ibmExecutionTrace: ibmDocTrace,
+        requestId: clientReqId,
+        sessionId: clientSessionId,
+        session_id: clientSessionId,
+        timestamp: clientTimestamp,
+        salt: clientSalt,
+      });
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // MODE 3: IMAGE / PHOTO INPUT
+    // ─────────────────────────────────────────────────────────────────────────────
     let cleanBase64 = String(imageBase64 || "");
     if (cleanBase64.includes(",")) {
       cleanBase64 = cleanBase64.split(",")[1];
     }
     cleanBase64 = cleanBase64.replace(/\s+/g, "");
 
-    // Determine safe normalized mimeType
     let normalizedMimeType = mimeType;
     if (typeof imageBase64 === "string" && imageBase64.startsWith("data:")) {
       const match = imageBase64.match(/^data:([^;]+);base64,/);
@@ -553,20 +1179,10 @@ app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"],
     const imgFingerprint = computeImageFingerprint(cleanBase64);
 
     console.group(`📡 [Server Gemini Vision Lifecycle | Trace: ${traceId}]`);
-    console.log("─── STEP 1: INCOMING REQUEST METADATA ───");
     console.log("Client Request ID:", clientReqId);
-    console.log("Request Timestamp:", clientTimestamp);
-    console.log("Cache-Busting Salt:", clientSalt);
-    console.log("Image Fingerprint (Hash & Length):", imgFingerprint);
     console.log("Normalized MIME Type:", normalizedMimeType);
-    console.log("Base64 Character Count:", cleanBase64.length);
-    console.log("Estimated Binary Size:", `${Math.round(cleanBase64.length * 0.75).toLocaleString()} bytes`);
-    console.log("Base64 Head (first 40 chars):", cleanBase64.substring(0, 40));
-    console.log("Base64 Tail (last 40 chars):", cleanBase64.substring(Math.max(0, cleanBase64.length - 40)));
-    console.log("User Context Hint:", hint || "none");
-    console.log("Sample Reference ID:", sampleId || "none");
-    console.log("Force Mock Flag:", Boolean(forceMock));
-    console.log("Gemini API Client Initialized?:", Boolean(ai));
+    console.log("Image Fingerprint:", imgFingerprint);
+    console.log("Base64 Length:", cleanBase64.length);
 
     // If caller explicitly preferred local ML model or queried engine=ml, try ML service first
     if ((req.body?.preferMl || req.query?.engine === "ml" || process.env.PREFER_LOCAL_ML === "true") && cleanBase64 && cleanBase64.length >= 20) {
@@ -578,7 +1194,7 @@ app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"],
         console.groupEnd();
         res.json({
           success: true,
-          result: formatted,
+          result: { ...formatted, inputMode: "image" },
           isDemoMode: false,
           engine: "mobilenet_v3_local",
           requestId: clientReqId,
@@ -610,11 +1226,10 @@ app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"],
     if (forceMock && sampleId) {
       console.warn("⚠️ Triggered Sample Fixture Condition (forceMock=true, sampleId=" + sampleId + ")");
       const result = getFallbackAnalysis(hint, sampleId, imageBase64);
-      console.log("Sample Fixture Result Generated:\n", JSON.stringify(result, null, 2));
       console.groupEnd();
       res.json({
         success: true,
-        result,
+        result: { ...result, inputMode: "image" },
         isDemoMode: true,
         requestId: clientReqId,
         sessionId: clientSessionId,
@@ -635,7 +1250,7 @@ app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"],
         console.groupEnd();
         res.json({
           success: true,
-          result: formatted,
+          result: { ...formatted, inputMode: "image" },
           isDemoMode: false,
           engine: "mobilenet_v3_local",
           requestId: clientReqId,
@@ -647,14 +1262,19 @@ app.post(["/api/analyze-waste", "/analyze-waste", "/api/classify", "/classify"],
         return;
       }
 
-      console.warn("⚠️ Neither Gemini nor local ML microservice could process the image.");
+      console.warn("⚠️ Serving smart local segregation guidance.");
+      const fallback = getFallbackAnalysis(hint, sampleId, imageBase64);
       console.groupEnd();
-      res.status(503).json({
-        success: false,
-        error: "AI classification service is unavailable. Please ensure GEMINI_API_KEY is configured or the local Python ML service is running at http://127.0.0.1:8000.",
+      res.json({
+        success: true,
+        result: { ...fallback, inputMode: "image" },
+        isDemoMode: true,
+        engine: "local_rules",
         requestId: clientReqId,
         sessionId: clientSessionId,
+        session_id: clientSessionId,
         timestamp: clientTimestamp,
+        salt: clientSalt,
       });
       return;
     }
@@ -729,24 +1349,6 @@ Classify the waste into one of these exact 11 categories:
 
 Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, simple disposal instructions, recyclable rinsing advice if applicable, and hazardous/e-waste safety warnings. Respond strictly in the specified JSON structure.`;
 
-    console.log("─── STEP 2: SPECIFIC PAYLOAD TRANSMITTED TO GEMINI API ───");
-    console.log("Request Freshness Token:", {
-      sessionId: clientSessionId,
-      requestId: clientReqId,
-      timestamp: clientTimestamp,
-      salt: clientSalt,
-    });
-    console.log("System Instruction:\n", systemInstruction);
-    console.log("Contents InlineData:", {
-      mimeType: normalizedMimeType,
-      dataLength: cleanBase64.length,
-      imageFingerprint: imgFingerprint,
-      headSnippet: cleanBase64.substring(0, 50),
-      tailSnippet: cleanBase64.substring(Math.max(0, cleanBase64.length - 50)),
-    });
-    console.log("Specific Prompt Text Sent to Gemini Model:\n", promptText);
-    console.log("Generation Config:", { responseMimeType: "application/json" });
-
     const { response, modelUsed } = await generateWithModelFallback(
       ai,
       {
@@ -770,9 +1372,6 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
     );
 
     let rawText = response.text || "{}";
-    console.log(`─── STEP 3: RAW RESPONSE RECEIVED FROM GEMINI API (${modelUsed}) ───`);
-    console.log("Raw Response Text from Gemini:\n", rawText);
-
     rawText = rawText.replace(/```json\s*/gi, "").replace(/```\s*$/gi, "").trim();
     
     let parsed: any = {};
@@ -788,10 +1387,6 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
       }
     }
 
-    console.log("─── STEP 4: PARSED JSON MODEL OUTPUT ───");
-    console.log("Parsed JSON Object:\n", JSON.stringify(parsed, null, 2));
-
-    // Support both the exact EcoSort AI schema (snake_case) and enriched keys
     const rawCategory = String(parsed.category || "Recyclable Waste").trim();
     const detectedItemName = parsed.detected_item || parsed.detectedItem || "Identified Waste Item";
     const materialType = parsed.material || "Recoverable Material";
@@ -802,8 +1397,6 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
     const reasoning = parsed.reason || parsed.whyThisResult || "Identified based on visual surface texture and material composition.";
     const sustainabilityTip = parsed.sustainability_tip || parsed.ecoTip || "Diverting this item from landfills reduces greenhouse gas emissions.";
 
-    // Map 11 categories to app stream categories:
-    // 1. Wet Waste, 2. Dry Waste, 3. Plastic, 4. Paper, 5. Glass, 6. Metal, 7. E-Waste, 8. Hazardous Waste, 9. Organic Waste, 10. Recyclable Waste, 11. Other/Unknown
     const catLower = rawCategory.toLowerCase();
     let normalizedCategory: "recyclable" | "organic" | "ewaste" | "hazardous" | "general" | "context_dependent" = "recyclable";
     let categoryLabel = rawCategory;
@@ -850,8 +1443,6 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
     }
 
     const isSpecial = normalizedCategory === "ewaste" || normalizedCategory === "hazardous";
-
-    // Recyclability label
     const recyclabilityText = parsed.recyclability || (
       isRecyclableBool
         ? (disposalInstruction.toLowerCase().includes("rinse") || disposalInstruction.toLowerCase().includes("clean")
@@ -870,7 +1461,6 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
         ];
 
     const uniqueId = `scan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    
     const carbonSavedVal = typeof parsed.carbonSavedKg === "number"
       ? parsed.carbonSavedKg
       : (normalizedCategory === "recyclable" ? 0.28 : normalizedCategory === "organic" ? 0.22 : normalizedCategory === "ewaste" ? 0.50 : 0.10);
@@ -913,6 +1503,7 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
       id: uniqueId,
       timestamp: new Date().toISOString(),
       isMock: false,
+      inputMode: "image" as const,
       rawJson: {
         detected_item: detectedItemName,
         category: categoryLabel,
@@ -926,17 +1517,19 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
       }
     };
 
+    // Execute IBM Bob pipeline: Entity extraction, ISO 14001 validation & EPA carbon accounting
+    const { result: enrichedVisionResult, trace: ibmVisionTrace } = await executeIbmBobPipeline("image", result as any, traceId);
+
     const durationMs = Date.now() - startTime;
-    console.log("─── STEP 5: FINAL RESULT DISPATCHED TO CLIENT ───");
-    console.log(`Processed in ${durationMs}ms using live model: ${modelUsed}`);
-    console.log("Item:", result.detectedItem, "| Stream:", result.category, "| Bin:", result.binColor, "| Confidence:", `${result.confidence}%`);
+    console.log("Processed in", durationMs, "ms using live model:", modelUsed, "and IBM Granite Validator");
     console.groupEnd();
 
     res.json({
       success: true,
-      result,
+      result: enrichedVisionResult,
       isDemoMode: false,
-      modelUsed,
+      modelUsed: `${modelUsed} + IBM Granite Validator`,
+      ibmExecutionTrace: ibmVisionTrace,
       durationMs,
       requestId: clientReqId,
       sessionId: clientSessionId,
@@ -949,13 +1542,23 @@ Adhere strictly to visual evidence, give confidence 0-100, bin recommendation, s
     const errMsg = (error as any)?.message || String(error || "");
     const isQuota = (error as any)?.status === 429 || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota");
     console.info(`[Server Gemini API] Vision model unavailable (${isQuota ? 'Free-tier daily quota limit' : 'transient network'} in ${durationMs}ms). Serving smart local segregation guidance.`);
-    const fallback = getFallbackAnalysis(req.body.hint, req.body.sampleId, req.body.imageBase64);
+    const fallback = getFallbackAnalysis(req.body.text || req.body.hint, req.body.sampleId, req.body.imageBase64);
+    const enrichedFallback = enrichWithIbmAi(fallback as any);
+    if (!enrichedFallback.imageUrl && (effectiveMode === "text" || effectiveMode === "document")) {
+      enrichedFallback.imageUrl = generateMultimodalVisual(effectiveMode, enrichedFallback.detectedItem, enrichedFallback.categoryLabel, enrichedFallback.binColor);
+    }
     console.groupEnd();
 
     res.json({
       success: true,
-      result: fallback,
+      result: {
+        ...enrichedFallback,
+        inputMode: effectiveMode,
+        inputText: effectiveMode === "text" ? req.body.text : undefined,
+        documentName: effectiveMode === "document" ? req.body.documentName : undefined,
+      },
       isDemoMode: true,
+      engine: "ibm_granite_nlu_fallback",
       requestId: clientReqId,
       sessionId: clientSessionId,
       session_id: clientSessionId,

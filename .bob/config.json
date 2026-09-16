@@ -1,0 +1,53 @@
+{
+  "$schema": "https://ibm.biz/bob-agent-schema.json",
+  "agent": {
+    "name": "IBM Bob",
+    "version": "2.4.0",
+    "role": "AI Waste Segregation Assistant & Workflow Engineer",
+    "platform": "IBM watsonx.ai",
+    "foundation_models": {
+      "inference": "ibm/granite-3-8b-instruct",
+      "code": "ibm/granite-34b-code-instruct",
+      "guardrail": "ibm/granite-guardian-3.1-8b"
+    }
+  },
+  "project": {
+    "name": "EcoSort AI",
+    "description": "Multimodal AI Waste Classification and Disposal Assistant",
+    "compliance_standards": [
+      "ISO 14001 Environmental Management",
+      "EPA WARM Circular Economy Carbon Accounting",
+      "EU Waste Framework Directive (Directive 2008/98/EC)"
+    ]
+  },
+  "pipeline": {
+    "architecture": "Unified Multi-Stage Inference & Audit",
+    "flow": [
+      "Input Ingestion (Image, Text, Document)",
+      "Primary Classification (MobileNetV3 / Vision)",
+      "IBM Granite NLU & Entity Extraction",
+      "IBM Waste Information Processing",
+      "IBM Response Validation & Safety Audit",
+      "Carbon Impact & Sustainability Calculation",
+      "Unified Response Synthesis"
+    ]
+  },
+  "tools": [
+    {
+      "name": "waste_entity_extractor",
+      "description": "Extracts polymer resin codes, alloy types, and physical contamination state from descriptions."
+    },
+    {
+      "name": "hazard_safety_auditor",
+      "description": "Enforces strict reclassification of lithium, battery, and chemical hazards to prevent improper municipal disposal."
+    },
+    {
+      "name": "epa_warm_carbon_calculator",
+      "description": "Calculates net avoided CO2e greenhouse gas emissions based on material diversion."
+    },
+    {
+      "name": "confidence_calibrator",
+      "description": "Validates confidence bounds and penalizes ambiguous or damaged input samples."
+    }
+  ]
+}

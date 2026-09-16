@@ -57,7 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 EcoSort<span className="text-emerald-600">AI</span>
               </span>
               <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
-                AI Vision
+                Multimodal • IBM AI
               </span>
             </div>
             <p className="text-[11px] text-slate-500 font-medium hidden sm:block">
