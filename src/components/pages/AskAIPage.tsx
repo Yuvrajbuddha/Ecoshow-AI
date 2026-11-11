@@ -121,13 +121,13 @@ export const AskAIPage: React.FC<AskAIPageProps> = ({ isDemoMode }) => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-10 py-8 space-y-6">
       {/* Header & RAG Architecture Pill */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-2xl">🌿</span>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Space_Grotesk',sans-serif]">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-[#17211D] tracking-[-0.035em]">
               Ask EcoSort AI
             </h1>
           </div>
@@ -228,7 +228,7 @@ export const AskAIPage: React.FC<AskAIPageProps> = ({ isDemoMode }) => {
       </div>
 
       {/* Chat Messages Container */}
-      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-4 sm:p-6 min-h-[420px] max-h-[560px] overflow-y-auto flex flex-col space-y-4">
+      <div className="premium-card p-4 sm:p-6 min-h-[420px] max-h-[560px] overflow-y-auto flex flex-col space-y-4">
         {messages.map((msg) => (
           <div
             key={msg.id}

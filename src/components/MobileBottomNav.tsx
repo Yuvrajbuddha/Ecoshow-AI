@@ -150,7 +150,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       </AnimatePresence>
 
       {/* Persistent Bottom Bar */}
-      <div className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 py-1.5 px-3 lg:hidden shadow-lg shadow-slate-900/10">
+      <div className="fixed bottom-0 inset-x-0 z-40 bg-white/90 backdrop-blur-xl border-t border-slate-200/90 py-2 px-3 lg:hidden shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
         <div className="flex items-center justify-around relative">
           {/* Home */}
           <button
@@ -181,7 +181,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             <button
               id="mobile-nav-scan-cta"
               onClick={() => setActiveTab('scan')}
-              className="w-14 h-14 rounded-full bg-gradient-to-tr from-[#0F392B] via-[#059669] to-[#10B981] text-white flex items-center justify-center shadow-lg shadow-emerald-900/30 active:scale-95 transition-transform border-4 border-white"
+              className="w-14 h-14 rounded-[18px] bg-[#047857] text-white flex items-center justify-center shadow-lg shadow-emerald-900/30 active:scale-95 transition-transform border-4 border-white"
               aria-label="Scan Waste"
             >
               <Camera className="w-6 h-6" />

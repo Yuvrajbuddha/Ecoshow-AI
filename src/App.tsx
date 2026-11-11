@@ -163,7 +163,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#F8FAF8] via-white to-[#F0FDF4] text-slate-800 flex flex-col font-['Plus_Jakarta_Sans',sans-serif] antialiased selection:bg-emerald-200 selection:text-emerald-900 pb-20 lg:pb-0">
+    <div className="premium-shell min-h-screen text-slate-800 flex flex-col antialiased pb-20 lg:pb-0">
       {/* Top Navigation */}
       <Navbar
         activeTab={activeTab}

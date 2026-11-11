@@ -868,14 +868,14 @@ export const ScanWastePage: React.FC<ScanWastePageProps> = ({
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-8">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-10 py-6 sm:py-10 space-y-8">
       {/* Header */}
       <div className="text-center space-y-3">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200">
           <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
           <span>Multimodal EcoSort AI</span>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight font-['Space_Grotesk',sans-serif]">
+        <h1 className="text-3xl sm:text-4xl font-extrabold text-[#17211D] tracking-[-0.04em]">
           What are you throwing away?
         </h1>
         <p className="text-slate-600 text-sm sm:text-base max-w-xl mx-auto">

@@ -243,7 +243,7 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
+    <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-10 py-8 space-y-8">
       {/* Toast Notification for Report Download */}
       <AnimatePresence>
         {downloadNotification && (
@@ -277,7 +277,7 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
             <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
             <span>Environmental Impact Analytics</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Space_Grotesk',sans-serif]">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#17211D] tracking-[-0.035em]">
             Your Sustainability Journey
           </h1>
           <p className="text-slate-500 text-sm">
@@ -525,7 +525,7 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
       {/* CHARTS SECTION (Weekly Activity & Waste Breakdown) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Chart 1: Activity Chart */}
-        <div className="lg:col-span-7 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+        <div className="lg:col-span-7 premium-card p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-bold text-base text-slate-900">Weekly Waste Activity</h3>
@@ -580,7 +580,7 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
         </div>
 
         {/* Chart 2: Waste Breakdown (Pie Chart + Legend) */}
-        <div className="lg:col-span-5 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+        <div className="lg:col-span-5 premium-card p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-bold text-base text-slate-900">Waste Stream Breakdown</h3>
@@ -657,7 +657,7 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
       <CommunityLeaderboard metrics={metrics} />
 
       {/* GAMIFICATION & BADGES SECTION */}
-      <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+      <div className="premium-card p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
             <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">

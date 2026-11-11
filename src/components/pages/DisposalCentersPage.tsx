@@ -118,7 +118,7 @@ export const DisposalCentersPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-10 py-8 space-y-6">
       {/* GLOBAL TOAST NOTICE */}
       <AnimatePresence>
         {eventToast && (
@@ -141,7 +141,7 @@ export const DisposalCentersPage: React.FC = () => {
             <MapPin className="w-3.5 h-3.5 text-emerald-600" />
             <span>Drop-off & Circular Events Directory</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Space_Grotesk',sans-serif]">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#17211D] tracking-[-0.035em]">
             Where Can I Dispose This?
           </h1>
           <p className="text-slate-500 text-sm">

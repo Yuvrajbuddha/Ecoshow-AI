@@ -4,22 +4,22 @@ import { Sparkles, ArrowRight, CheckCircle2, Scan, Layers, Leaf } from 'lucide-r
 
 export const HeroIllustration: React.FC = () => {
   return (
-    <div className="relative w-full max-w-lg mx-auto flex flex-col items-center justify-center p-2 sm:p-4">
+    <div className="relative w-full max-w-xl mx-auto flex flex-col items-center justify-center p-2 sm:p-4">
       {/* Background Ambient Glow */}
       <div className="absolute -inset-4 bg-gradient-to-tr from-emerald-200/50 via-teal-100/40 to-emerald-100/30 rounded-3xl blur-3xl -z-10 pointer-events-none" />
 
       {/* Main Glassmorphism Card Showcase */}
-      <div className="w-full bg-white/95 backdrop-blur-md rounded-3xl border border-emerald-200/80 shadow-xl shadow-emerald-950/5 p-5 sm:p-6 space-y-5">
+      <div className="w-full bg-white/90 backdrop-blur-md rounded-[28px] border border-slate-200/90 shadow-[0_24px_70px_rgba(6,78,59,0.12)] p-5 sm:p-7 space-y-5">
         {/* Card Header: AI Vision Live Process */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-              Live AI Sorting Pipeline
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-700">
+              AI sorting workspace
             </span>
           </div>
-          <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80 text-[10px] font-bold">
-            Gemini Multimodal
+          <span className="px-2.5 py-1 rounded-full bg-slate-950 text-white border border-slate-800 text-[10px] font-bold">
+          Live inference
           </span>
         </div>
 
@@ -77,7 +77,7 @@ export const HeroIllustration: React.FC = () => {
         </div>
 
         {/* Live Classification Result Snapshot Box */}
-        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950 to-slate-900 text-white space-y-2 shadow-sm">
+        <div className="p-4 rounded-2xl bg-gradient-to-br from-[#064E3B] via-[#0F392B] to-slate-950 text-white space-y-2 shadow-sm">
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold flex items-center gap-1.5 text-emerald-300">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />

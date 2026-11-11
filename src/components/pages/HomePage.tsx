@@ -30,45 +30,46 @@ export const HomePage: React.FC<HomePageProps> = ({
   onSelectSampleScan,
 }) => {
   return (
-    <div className="w-full space-y-16 sm:space-y-24 pb-16">
+    <div className="w-full space-y-20 sm:space-y-28 pb-20">
       {/* 1. HERO SECTION */}
-      <section className="relative pt-6 sm:pt-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+      <section className="relative pt-8 sm:pt-14 overflow-hidden">
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[44rem] h-[28rem] rounded-full bg-emerald-100/40 blur-3xl pointer-events-none" />
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-10 relative">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-16 items-center">
             {/* Left Column: Copy & Actions */}
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
-              className="lg:col-span-6 space-y-6 text-center lg:text-left"
+              className="lg:col-span-6 space-y-7 text-center lg:text-left"
             >
               {/* Trust/Technology Badges */}
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200/80 shadow-2xs">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white text-emerald-800 text-xs font-bold border border-emerald-200/80 shadow-sm">
                   <Eye className="w-3.5 h-3.5 text-emerald-600" />
                   <span>AI Vision</span>
                 </span>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-50 text-teal-800 text-xs font-bold border border-teal-200/80 shadow-2xs">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white text-teal-800 text-xs font-bold border border-teal-200/80 shadow-sm">
                   <Recycle className="w-3.5 h-3.5 text-teal-600" />
                   <span>Smart Segregation</span>
                 </span>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-blue-800 text-xs font-bold border border-blue-200/80 shadow-2xs">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white text-blue-800 text-xs font-bold border border-blue-200/80 shadow-sm">
                   <Leaf className="w-3.5 h-3.5 text-blue-600" />
                   <span>Eco Impact</span>
                 </span>
               </div>
 
               {/* Main Headline */}
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-[1.08] font-['Space_Grotesk',sans-serif]">
-                Sort Smarter. <br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-800 via-emerald-600 to-teal-600">
-                  Live Greener.
+              <h1 className="text-5xl sm:text-6xl lg:text-[4.65rem] font-extrabold tracking-[-0.055em] text-[#17211D] leading-[0.98]">
+                Turn waste into <br />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#064E3B] via-[#047857] to-[#65A30D]">
+                  a better future.
                 </span>
               </h1>
 
               {/* Subheading */}
-              <p className="text-lg sm:text-xl text-slate-600 leading-relaxed max-w-xl mx-auto lg:mx-0 font-normal">
-                AI-powered waste recognition that helps you dispose, recycle, and reuse responsibly.
+              <p className="text-base sm:text-lg text-slate-600 leading-relaxed max-w-xl mx-auto lg:mx-0 font-normal">
+                EcoSort AI identifies what you’re holding, explains what to do next, and turns everyday waste decisions into measurable environmental progress.
               </p>
 
               {/* Primary CTAs */}
@@ -76,25 +77,25 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <button
                   id="hero-cta-scan"
                   onClick={() => setActiveTab('scan')}
-                  className="w-full sm:w-auto px-7 py-4 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-base shadow-lg shadow-emerald-800/25 hover:shadow-xl hover:shadow-emerald-800/35 transition-all flex items-center justify-center gap-2.5 active:scale-95 group border border-emerald-500/30"
+                  className="w-full sm:w-auto px-7 py-4 rounded-xl bg-[#047857] hover:bg-[#064E3B] text-white font-bold text-sm shadow-lg shadow-emerald-900/20 hover:shadow-xl transition-all flex items-center justify-center gap-2.5 active:scale-95 group border border-emerald-500/30"
                 >
                   <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                  <span>Scan Your Waste</span>
+                  <span>Start scanning</span>
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>
 
                 <button
                   id="hero-cta-waste-guide"
                   onClick={() => setActiveTab('guide')}
-                  className="w-full sm:w-auto px-6 py-4 rounded-2xl bg-white hover:bg-slate-50 text-slate-800 font-bold text-base border border-slate-200/90 shadow-xs hover:shadow transition-all flex items-center justify-center gap-2 active:scale-95"
+                  className="w-full sm:w-auto px-6 py-4 rounded-xl bg-white hover:bg-slate-50 text-slate-800 font-bold text-sm border border-slate-200 shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 active:scale-95"
                 >
                   <BookOpen className="w-5 h-5 text-emerald-600" />
-                  <span>Explore Waste Guide</span>
+                  <span>Explore EcoSort</span>
                 </button>
               </div>
 
               {/* Small trust indicator line */}
-              <div className="pt-3 border-t border-slate-200/80 flex flex-wrap items-center justify-center lg:justify-start gap-6 text-xs text-slate-500 font-medium">
+              <div className="pt-4 border-t border-slate-200/80 flex flex-wrap items-center justify-center lg:justify-start gap-5 text-xs text-slate-500 font-medium">
                 <span className="flex items-center gap-1.5 text-slate-700">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   Instant Bin Matching
@@ -119,10 +120,10 @@ export const HomePage: React.FC<HomePageProps> = ({
       </section>
 
       {/* 2. STATISTIC / CAPABILITY CARDS (AI Waste Analysis, Smart Disposal Guidance, Environmental Impact) */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-10">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Card 1: AI Waste Analysis */}
-          <div className="p-7 rounded-3xl bg-white border border-slate-200/80 shadow-xs hover:shadow-md transition-all space-y-3 group">
+          <div className="premium-card p-7 space-y-3 group">
             <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-center text-emerald-700 group-hover:scale-105 transition-transform">
               <Sparkles className="w-6 h-6" />
             </div>
@@ -140,7 +141,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {/* Card 2: Smart Disposal Guidance */}
-          <div className="p-7 rounded-3xl bg-white border border-slate-200/80 shadow-xs hover:shadow-md transition-all space-y-3 group">
+          <div className="premium-card p-7 space-y-3 group">
             <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-200/80 flex items-center justify-center text-blue-700 group-hover:scale-105 transition-transform">
               <Compass className="w-6 h-6" />
             </div>
@@ -158,7 +159,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {/* Card 3: Environmental Impact */}
-          <div className="p-7 rounded-3xl bg-white border border-slate-200/80 shadow-xs hover:shadow-md transition-all space-y-3 group">
+          <div className="premium-card p-7 space-y-3 group">
             <div className="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200/80 flex items-center justify-center text-teal-700 group-hover:scale-105 transition-transform">
               <Leaf className="w-6 h-6" />
             </div>
