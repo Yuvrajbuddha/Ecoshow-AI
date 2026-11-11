@@ -11,7 +11,7 @@ import { DisposalCentersPage } from './components/pages/DisposalCentersPage';
 import { WasteGuidePage } from './components/pages/WasteGuidePage';
 import { ResponsibleAIPage } from './components/pages/ResponsibleAIPage';
 import { RecyclingHistoryGalleryPage } from './components/pages/RecyclingHistoryGalleryPage';
-import { SAMPLE_METRICS, SAMPLE_ACHIEVEMENTS, INITIAL_RECYCLING_HISTORY } from './services/sampleData';
+import { EMPTY_IMPACT_METRICS } from './services/sampleData';
 import { analyzeWasteImage } from './services/AIService';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShieldCheck, Heart } from 'lucide-react';
@@ -26,18 +26,18 @@ export default function App() {
   const [metrics, setMetrics] = useState<ImpactMetrics>(() => {
     try {
       const saved = localStorage.getItem('ecosort_metrics');
-      return saved ? JSON.parse(saved) : SAMPLE_METRICS;
+      return saved ? JSON.parse(saved) : EMPTY_IMPACT_METRICS;
     } catch {
-      return SAMPLE_METRICS;
+      return EMPTY_IMPACT_METRICS;
     }
   });
 
   const [badges, setBadges] = useState<AchievementBadge[]>(() => {
     try {
       const saved = localStorage.getItem('ecosort_badges');
-      return saved ? JSON.parse(saved) : SAMPLE_ACHIEVEMENTS;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return SAMPLE_ACHIEVEMENTS;
+      return [];
     }
   });
 
@@ -50,9 +50,9 @@ export default function App() {
           return parsed;
         }
       }
-      return INITIAL_RECYCLING_HISTORY;
+      return [];
     } catch {
-      return INITIAL_RECYCLING_HISTORY;
+      return [];
     }
   });
 
@@ -95,7 +95,7 @@ export default function App() {
   };
 
   const handleRestoreDefaults = () => {
-    setRecentScans(INITIAL_RECYCLING_HISTORY);
+    setRecentScans([]);
   };
 
   const handleRefineScan = async (hint: string) => {
@@ -157,8 +157,8 @@ export default function App() {
   };
 
   const handleResetUserData = () => {
-    setMetrics(SAMPLE_METRICS);
-    setBadges(SAMPLE_ACHIEVEMENTS);
+    setMetrics(EMPTY_IMPACT_METRICS);
+    setBadges([]);
     setRecentScans([]);
   };
 

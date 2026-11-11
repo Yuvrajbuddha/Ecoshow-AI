@@ -22,13 +22,32 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// CORS headers for resilient API access across environments (Local, Cloud Run, Vercel)
-app.use((_req: Request, res: Response, next: express.NextFunction) => {
-  res.header("Access-Control-Allow-Origin", "*");
+const configuredOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+// CORS headers for local development and explicitly configured deployments.
+app.use((req: Request, res: Response, next: express.NextFunction) => {
+  const requestOrigin = req.headers.origin;
+  const isAllowed =
+    !requestOrigin ||
+    configuredOrigins.length === 0
+      ? process.env.NODE_ENV !== "production" || !requestOrigin
+      : configuredOrigins.includes(requestOrigin);
+
+  if (isAllowed && requestOrigin) {
+    res.header("Access-Control-Allow-Origin", requestOrigin);
+    res.header("Vary", "Origin");
+  }
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-Request-Id, X-Session-Id, X-Request-Timestamp, X-Request-Salt");
-  if (_req.method === "OPTIONS") {
-    res.status(200).end();
+  if (req.method === "OPTIONS") {
+    res.status(isAllowed ? 204 : 403).end();
+    return;
+  }
+  if (!isAllowed) {
+    res.status(403).json({ success: false, error: "Origin is not allowed." });
     return;
   }
   next();
@@ -48,6 +67,41 @@ app.use((req: Request, res: Response, next: express.NextFunction) => {
   }
   return express.urlencoded({ extended: true, limit: "25mb" })(req, res, next);
 });
+
+type RateLimitBucket = { count: number; resetAt: number };
+const rateLimitBuckets = new Map<string, RateLimitBucket>();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const AI_REQUESTS_PER_WINDOW = 30;
+
+function getClientAddress(req: Request): string {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+function rateLimitAiRequests(req: Request, res: Response, next: express.NextFunction): void {
+  const now = Date.now();
+  const key = `${getClientAddress(req)}:${req.path}`;
+  const current = rateLimitBuckets.get(key);
+  const bucket =
+    current && current.resetAt > now
+      ? current
+      : { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+
+  bucket.count += 1;
+  rateLimitBuckets.set(key, bucket);
+
+  if (bucket.count > AI_REQUESTS_PER_WINDOW) {
+    res.setHeader("Retry-After", Math.ceil((bucket.resetAt - now) / 1000));
+    res.status(429).json({
+      success: false,
+      error: "Too many AI requests. Please try again shortly.",
+    });
+    return;
+  }
+
+  next();
+}
+
+app.use(["/api/analyze-waste", "/api/analyze-multimodal", "/api/classify", "/api/chat", "/api/transcribe-audio"], rateLimitAiRequests);
 
 // Lazy initialization of Gemini Client using server-side GEMINI_API_KEY secret
 let geminiClient: GoogleGenAI | null = null;

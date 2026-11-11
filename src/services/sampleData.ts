@@ -474,6 +474,32 @@ export const INITIAL_IMPACT_METRICS: ImpactMetrics = {
 
 export const SAMPLE_METRICS = INITIAL_IMPACT_METRICS;
 
+export const EMPTY_IMPACT_METRICS: ImpactMetrics = {
+  itemsScanned: 0,
+  correctlySorted: 0,
+  ecoScore: 0,
+  streakDays: 0,
+  ecoPoints: 0,
+  totalCarbonSavedKg: 0,
+  categoryBreakdown: {
+    recyclable: 0,
+    organic: 0,
+    ewaste: 0,
+    hazardous: 0,
+    general: 0,
+    context_dependent: 0
+  },
+  weeklyActivity: [
+    { day: 'Mon', scans: 0, sorted: 0 },
+    { day: 'Tue', scans: 0, sorted: 0 },
+    { day: 'Wed', scans: 0, sorted: 0 },
+    { day: 'Thu', scans: 0, sorted: 0 },
+    { day: 'Fri', scans: 0, sorted: 0 },
+    { day: 'Sat', scans: 0, sorted: 0 },
+    { day: 'Sun', scans: 0, sorted: 0 }
+  ]
+};
+
 export const SAMPLE_ACHIEVEMENTS: AchievementBadge[] = [
   {
     id: 'badge-rookie',
@@ -1165,4 +1191,3 @@ export const COMMUNITY_LEADERBOARD_ENTRIES: Record<string, CommunityLeaderboardE
     }
   ]
 };
-
