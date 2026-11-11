@@ -14,13 +14,42 @@ import { RecyclingHistoryGalleryPage } from './components/pages/RecyclingHistory
 import { EMPTY_IMPACT_METRICS } from './services/sampleData';
 import { analyzeWasteImage } from './services/AIService';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, Heart } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
+import { CommandPalette } from './components/CommandPalette';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [currentAnalysis, setCurrentAnalysis] = useState<WasteAnalysisResult | null>(null);
   const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
   const [isReanalyzing, setIsReanalyzing] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      return localStorage.getItem('ecosort_theme') === 'dark' ? 'dark' : 'light';
+    } catch {
+      return 'light';
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      localStorage.setItem('ecosort_theme', theme);
+    } catch {
+      // Theme persistence is optional in restricted browser contexts.
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setIsCommandPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, []);
 
   // User impact statistics with localStorage persistence
   const [metrics, setMetrics] = useState<ImpactMetrics>(() => {
@@ -173,6 +202,9 @@ export default function App() {
         }}
         streakDays={metrics.streakDays}
         isDemoMode={isDemoMode}
+        theme={theme}
+        onToggleTheme={() => setTheme((current) => current === 'light' ? 'dark' : 'light')}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -362,6 +394,12 @@ export default function App() {
 
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <CommandPalette
+        open={isCommandPaletteOpen}
+        activeTab={activeTab}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigate={setActiveTab}
+      />
     </div>
   );
 }
