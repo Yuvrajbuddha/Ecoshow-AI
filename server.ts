@@ -30,11 +30,18 @@ const configuredOrigins = (process.env.CORS_ORIGINS || "")
 // CORS headers for local development and explicitly configured deployments.
 app.use((req: Request, res: Response, next: express.NextFunction) => {
   const requestOrigin = req.headers.origin;
-  const isAllowed =
-    !requestOrigin ||
-    configuredOrigins.length === 0
-      ? process.env.NODE_ENV !== "production" || !requestOrigin
-      : configuredOrigins.includes(requestOrigin);
+  let isSameOrigin = false;
+  if (requestOrigin) {
+    try {
+      isSameOrigin = new URL(requestOrigin).host === req.get("host");
+    } catch {
+      isSameOrigin = false;
+    }
+  }
+  const isAllowed = !requestOrigin ||
+    isSameOrigin ||
+    configuredOrigins.includes(requestOrigin) ||
+    (configuredOrigins.length === 0 && process.env.NODE_ENV !== "production");
 
   if (isAllowed && requestOrigin) {
     res.header("Access-Control-Allow-Origin", requestOrigin);
@@ -59,13 +66,24 @@ app.use((req: Request, res: Response, next: express.NextFunction) => {
   if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
     return next();
   }
-  return express.json({ limit: "25mb" })(req, res, next);
+  return express.json({ limit: "4mb" })(req, res, next);
 });
 app.use((req: Request, res: Response, next: express.NextFunction) => {
   if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
     return next();
   }
-  return express.urlencoded({ extended: true, limit: "25mb" })(req, res, next);
+  return express.urlencoded({ extended: true, limit: "4mb" })(req, res, next);
+});
+
+app.use((error: unknown, _req: Request, res: Response, next: express.NextFunction) => {
+  if (error && typeof error === "object" && "type" in error && error.type === "entity.too.large") {
+    res.status(413).json({
+      success: false,
+      error: "Request payload is too large. Images are automatically compressed before upload.",
+    });
+    return;
+  }
+  next(error);
 });
 
 type RateLimitBucket = { count: number; resetAt: number };

@@ -53,6 +53,26 @@ Click the **Deploy with Vercel** button above. Vercel will clone this repository
 3. **Click Deploy**:
    Vercel will compile the Vite frontend to global edge CDN and deploy serverless functions in `/api`.
 
+### Vercel production configuration
+
+The repository includes a Vercel-specific build command in `vercel.json`:
+
+- **Install Command**: `npm ci`
+- **Build Command**: `npm run build:vercel`
+- **Output Directory**: `dist`
+- **API runtime**: TypeScript functions under `/api`, with a 60-second execution limit
+
+Add these environment variables in Vercel Project Settings:
+
+```env
+GEMINI_API_KEY=your_server_side_key
+CORS_ORIGINS=https://your-domain.vercel.app
+```
+
+Leave `VITE_API_BASE_URL` empty when the frontend and API are deployed together; the client uses same-origin `/api/*` requests. Do not configure `VITE_ML_SERVICE_URL` as a localhost URL in production. The Python service under `ml-model/` is a separate FastAPI deployment and can be connected through the server-side `ML_SERVICE_URL` variable.
+
+The Vercel functions forward the existing Express routes without starting a persistent server. The standalone Express server remains available for local development and container deployment.
+
 ---
 
 ## 💻 Local Development Setup

@@ -69,13 +69,17 @@ export function getApiBaseUrl(): string {
 
 /**
  * Resolves the configured local Python FastAPI ML microservice endpoint.
- * Evaluates VITE_ML_SERVICE_URL, ML_SERVICE_URL, or defaults to standard local port 8000.
+ * Uses an explicitly configured ML service URL. Production builds do not
+ * attempt to contact a developer machine.
  */
 export function getMlServiceUrl(): string {
   try {
     const customUrl = (import.meta as any).env?.VITE_ML_SERVICE_URL || (import.meta as any).env?.ML_SERVICE_URL;
     if (customUrl && typeof customUrl === 'string' && customUrl.trim() !== '') {
       return customUrl.trim().replace(/\/+$/, '');
+    }
+    if ((import.meta as any).env?.PROD) {
+      return '';
     }
   } catch {
     // In environments without import.meta.env
@@ -253,7 +257,8 @@ export class AIService {
     const apiBase = getApiBaseUrl();
 
     // 1. First try direct connection to ML_SERVICE_URL
-    try {
+    if (mlUrl) {
+      try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2000);
       const res = await fetch(`${mlUrl}/health`, { signal: controller.signal, cache: 'no-store' });
@@ -266,8 +271,9 @@ export class AIService {
           ...data,
         };
       }
-    } catch {
-      // Direct call failed or blocked by sandbox/CORS, try server-side proxy
+      } catch {
+        // Direct call failed or blocked by sandbox/CORS, try server-side proxy
+      }
     }
 
     // 2. Query Express server proxy endpoint /api/ml/status
@@ -369,10 +375,15 @@ export class AIService {
       throw new Error('Invalid image payload: Base64 image data is empty or corrupted.');
     }
 
-    console.log(`🔬 [EcoSort AIService] Dispatching to Local ML Endpoint: ${mlUrl}/classify-base64 (len: ${cleanBase64.length} chars)`);
+    if (!mlUrl) {
+      console.log('🔬 [EcoSort AIService] No browser ML endpoint configured; using server-side ML proxy.');
+    } else {
+      console.log(`🔬 [EcoSort AIService] Dispatching to Local ML Endpoint: ${mlUrl}/classify-base64 (len: ${cleanBase64.length} chars)`);
+    }
 
     // Strategy A: Direct POST to Python FastAPI ML service
-    try {
+    if (mlUrl) {
+      try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 6000);
       const res = await fetch(`${mlUrl}/classify-base64`, {
@@ -401,8 +412,9 @@ export class AIService {
           };
         }
       }
-    } catch (directErr) {
-      console.warn(`Direct connection to ${mlUrl}/classify-base64 not available, falling back to server ML proxy...`);
+      } catch (directErr) {
+        console.warn(`Direct connection to ${mlUrl}/classify-base64 not available, falling back to server ML proxy...`);
+      }
     }
 
     // Strategy B: Proxy through Express backend (/api/ml/classify)
@@ -436,7 +448,11 @@ export class AIService {
       console.warn('Server-side ML proxy error:', proxyErr);
     }
 
-    throw new Error('Local ML service is currently unavailable. Please verify the Python service is running on ' + mlUrl);
+    throw new Error(
+      mlUrl
+        ? 'Local ML service is currently unavailable. Please verify the Python service is running on ' + mlUrl
+        : 'Local ML service is not configured for this deployment. Configure ML_SERVICE_URL on the server or use Gemini Vision.'
+    );
   }
 
   /**
@@ -798,4 +814,3 @@ export async function analyzeWasteImage(
   const res = await service.analyzeWaste(imageBase64, mimeType, hint, sampleKey, options);
   return res.result;
 }
-
